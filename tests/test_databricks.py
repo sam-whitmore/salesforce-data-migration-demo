@@ -1,7 +1,20 @@
+import os
 import unittest
+from unittest.mock import patch
 
-from customer_migration.source import fetch_customer, fetch_customer_batches
+from p2_migration.databricks import connect_to_databricks, fetch_customer_batches
 from tests.fake_database import FakeDatabase
+
+
+class DatabricksConnectionTests(unittest.TestCase):
+    # Incomplete settings fail before any connection is attempted.
+    def test_missing_settings_are_reported_before_connecting(self):
+        # Arrange
+        with patch.dict(os.environ, {}, clear=True), patch("p2_migration.databricks.sql.connect") as connect:
+            # Act and Assert
+            with self.assertRaisesRegex(ValueError, "Missing Databricks settings: DATABRICKS_SERVER_HOSTNAME"):
+                connect_to_databricks()
+            connect.assert_not_called()
 
 
 class FetchCustomerBatchesTests(unittest.TestCase):
@@ -76,37 +89,6 @@ class FetchCustomerBatchesTests(unittest.TestCase):
 
         # Assert
         self.assertEqual(database.query_count, 0)
-
-
-class FetchCustomerTests(unittest.TestCase):
-    # A single matching record can proceed to validation.
-    def test_returns_one_matching_customer(self):
-        # Arrange: the simulated query has returned one match.
-        database = FakeDatabase(customers=["customer-1"])
-
-        # Act
-        customer = fetch_customer(database, "test.customers", "customer-1")
-
-        # Assert
-        self.assertEqual(customer, "customer-1")
-
-    # A missing customer stops the load before Salesforce is contacted.
-    def test_rejects_a_missing_customer(self):
-        # Arrange
-        database = FakeDatabase(customers=[])
-
-        # Act and Assert
-        with self.assertRaisesRegex(ValueError, "No customer found"):
-            fetch_customer(database, "test.customers", "customer-1")
-
-    # Duplicate source IDs must be resolved instead of choosing a record arbitrarily.
-    def test_rejects_duplicate_source_customers(self):
-        # Arrange
-        database = FakeDatabase(customers=["customer-1", "customer-1"])
-
-        # Act and Assert
-        with self.assertRaisesRegex(ValueError, "More than one customer"):
-            fetch_customer(database, "test.customers", "customer-1")
 
 
 if __name__ == "__main__":

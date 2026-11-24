@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: crm
+    description: Fictional customer data uploaded from p0_data/seed/customers_v1.csv to Databricks.
+    database: "{{ var('databricks_customers_catalog', 'workspace') }}"
+    schema: "{{ var('databricks_customers_schema', 'default') }}"
+    tables:
+      - name: customers_v1
+        identifier: "{{ var('databricks_customers_table_name', 'customers_v1') }}"

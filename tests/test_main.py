@@ -4,9 +4,14 @@ from contextlib import ExitStack, nullcontext, redirect_stdout
 from io import StringIO
 from unittest.mock import Mock, patch
 
+import requests
+from databricks.sql.exc import OperationalError
 from databricks.sql.types import Row
+from dbt.artifacts.schemas.run import RunExecutionResult
 
 from main import main
+from p1_preparation.prepare import PreparationError
+from p2_migration.migrate import MigrationError
 from tests.fake_database import FakeDatabase
 
 
@@ -21,7 +26,7 @@ def customer_row(customer_id, postcode="0110"):
     )
 
 
-class PipelineTests(unittest.TestCase):
+class MainTests(unittest.TestCase):
     def setUp(self):
         """Replace local settings and external services with test substitutes."""
         resources = ExitStack()
@@ -30,24 +35,34 @@ class PipelineTests(unittest.TestCase):
         resources.enter_context(redirect_stdout(self.output))
         resources.enter_context(patch("main.load_dotenv"))
         resources.enter_context(patch.dict(os.environ, {
-            "DATABRICKS_CUSTOMERS_TABLE": "test.customers",
+            "DATABRICKS_CUSTOMERS_TABLE": "test.raw.customers",
+            "DATABRICKS_TOKEN": "example-token",
         }, clear=True))
 
+        runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
+        self.build = runner.return_value.invoke
+        self.build.return_value.success = True
+        model = Mock(resource_type="model", relation_name="test.migration.stage_customers")
+        model.name = "stage_customers"
+        self.build.return_value.result = Mock(
+            spec=RunExecutionResult, results=[Mock(node=model)],
+        )
+
         self.database = FakeDatabase(customers=[])
-        resources.enter_context(patch(
-            "main.connect_to_databricks", return_value=nullcontext(self.database)
+        self.connect_to_databricks = resources.enter_context(patch(
+            "p2_migration.migrate.connect_to_databricks", return_value=nullcontext(self.database)
         ))
         resources.enter_context(patch(
-            "main.requests.Session", return_value=nullcontext(Mock())
+            "p2_migration.migrate.requests.Session", return_value=nullcontext(Mock())
         ))
         self.count_customers = resources.enter_context(patch(
-            "main.count_customers", return_value=(7, 7)
+            "p2_migration.migrate.count_customers", return_value=(7, 7)
         ))
         self.connect_to_salesforce = resources.enter_context(patch(
-            "main.connect_to_salesforce", return_value="https://example.my.salesforce.com"
+            "p2_migration.migrate.connect_to_salesforce", return_value="https://example.my.salesforce.com"
         ))
         self.save_and_verify = resources.enter_context(patch(
-            "customer_migration.pipeline.save_and_verify_account",
+            "p2_migration.migrate.save_and_verify_account",
             return_value=("created", {"Id": "example-account"}),
         ))
 
@@ -60,6 +75,8 @@ class PipelineTests(unittest.TestCase):
         main([])
 
         # Assert
+        self.build.assert_not_called()
+        self.assertEqual(self.database.parameters["customers_table_to_read"], "test.raw.customers")
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
         self.assertIn("Batch 2: 1 customers", self.output.getvalue())
@@ -79,6 +96,8 @@ class PipelineTests(unittest.TestCase):
         main(["--load"])
 
         # Assert
+        self.build.assert_called_once()
+        self.assertEqual(self.database.parameters["customers_table_to_read"], "test.migration.stage_customers")
         self.connect_to_salesforce.assert_called_once()
         self.assertEqual(self.save_and_verify.call_count, 7)
         loaded_ids = [call.args[2]["Source_Customer_ID__c"] for call in self.save_and_verify.call_args_list]
@@ -112,7 +131,7 @@ class PipelineTests(unittest.TestCase):
         self.count_customers.return_value = (2, 1)
 
         # Act and Assert
-        with self.assertRaisesRegex(ValueError, "present and unique"):
+        with self.assertRaisesRegex(MigrationError, "present and unique"):
             main(["--load"])
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
@@ -127,10 +146,72 @@ class PipelineTests(unittest.TestCase):
         ]
 
         # Act and Assert
-        with self.assertRaisesRegex(ValueError, "BillingPostalCode differs"):
+        with self.assertRaisesRegex(MigrationError, "BillingPostalCode differs"):
             main(["--load"])
         self.assertEqual(self.save_and_verify.call_count, 2)
         self.assertNotIn("Accounts verified:", self.output.getvalue())
+
+    # Failed preparation stops the workflow before extraction or Salesforce access.
+    def test_failed_dbt_build_prevents_migration(self):
+        # Arrange
+        self.build.return_value.success = False
+
+        # Act and Assert
+        with self.assertRaisesRegex(PreparationError, "Customer preparation failed"):
+            main(["--load"])
+        self.connect_to_databricks.assert_not_called()
+        self.connect_to_salesforce.assert_not_called()
+        self.save_and_verify.assert_not_called()
+
+    # A database failure is identified as Databricks, without showing raw error details.
+    def test_databricks_failure_is_reported_during_preview(self):
+        # Arrange
+        self.connect_to_databricks.side_effect = OperationalError("private connection details")
+
+        # Act and Assert
+        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+            main([])
+        self.assertNotIn("private connection details", str(raised.exception))
+        self.assertNotIn("Salesforce", str(raised.exception))
+        self.connect_to_salesforce.assert_not_called()
+
+    # A later read failure preserves earlier writes and cannot report a complete run.
+    def test_databricks_failure_after_a_batch_explains_partial_progress(self):
+        # Arrange
+        self.database.fetchmany = Mock(side_effect=[
+            [customer_row("first-customer")],
+            OperationalError("connection lost"),
+        ])
+
+        # Act and Assert
+        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+            main(["--load"])
+        self.assertIn("Earlier Salesforce writes may have completed", str(raised.exception))
+        self.assertEqual(self.save_and_verify.call_count, 1)
+        self.assertNotIn("Accounts verified:", self.output.getvalue())
+
+    # A Salesforce timeout stops later records and explains that a write may have completed.
+    def test_salesforce_timeout_stops_the_load(self):
+        # Arrange
+        self.database.customers = iter(customer_row(str(number)) for number in range(2))
+        self.save_and_verify.side_effect = requests.Timeout("private request details")
+
+        # Act and Assert
+        with self.assertRaisesRegex(MigrationError, "A Salesforce request failed") as raised:
+            main(["--load"])
+        self.assertIn("writes may have completed", str(raised.exception))
+        self.assertNotIn("private request details", str(raised.exception))
+        self.assertEqual(self.save_and_verify.call_count, 1)
+        self.assertNotIn("Accounts verified:", self.output.getvalue())
+
+    # Unexpected programming errors remain visible instead of being labelled network failures.
+    def test_unexpected_errors_are_not_disguised(self):
+        # Arrange
+        self.connect_to_databricks.side_effect = TypeError("unexpected programming error")
+
+        # Act and Assert
+        with self.assertRaisesRegex(TypeError, "unexpected programming error"):
+            main([])
 
 
 if __name__ == "__main__":

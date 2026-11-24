@@ -4,7 +4,6 @@ from urllib.parse import quote, urlsplit
 
 import requests
 
-
 API_VERSION = "68.0"
 EXTERNAL_ID_FIELD = "Source_Customer_ID__c"
 
@@ -29,6 +28,10 @@ def _salesforce_url(value: str) -> str:
 
 def connect_to_salesforce(session: requests.Session) -> str:
     """Authenticate the session and return the instance URL."""
+    required = ("SALESFORCE_MY_DOMAIN_URL", "SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise ValueError("Missing Salesforce settings: " + ", ".join(missing))
     domain = _salesforce_url(os.environ["SALESFORCE_MY_DOMAIN_URL"])
     response = session.post(
         f"{domain}/services/oauth2/token",

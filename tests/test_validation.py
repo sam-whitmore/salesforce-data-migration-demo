@@ -1,6 +1,6 @@
 import unittest
 
-from customer_migration.validation import validate_customer
+from p2_migration.validation import validate_customer
 
 
 class ValidateCustomerTests(unittest.TestCase):

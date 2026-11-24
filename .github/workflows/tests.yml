@@ -27,3 +27,10 @@ jobs:
 
       - name: Run tests
         run: python -m unittest discover -s tests -v
+
+      - name: Check dbt project configuration
+        env:
+          DATABRICKS_SERVER_HOSTNAME: example.invalid
+          DATABRICKS_HTTP_PATH: /sql/1.0/warehouses/example
+          DBT_ENV_SECRET_DATABRICKS_TOKEN: unused
+        run: dbt parse --project-dir p1_preparation/dbt --profiles-dir p1_preparation/dbt --no-partial-parse

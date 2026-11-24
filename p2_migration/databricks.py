@@ -6,6 +6,10 @@ from databricks.sql.types import Row
 
 
 def connect_to_databricks():
+    required = ("DATABRICKS_SERVER_HOSTNAME", "DATABRICKS_HTTP_PATH", "DATABRICKS_TOKEN")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise ValueError("Missing Databricks settings: " + ", ".join(missing))
     return sql.connect(
         server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
@@ -13,18 +17,18 @@ def connect_to_databricks():
     )
 
 
-def count_customers(connection, table_name: str) -> tuple[int, int]:
+def count_customers(connection, customers_table_to_read: str) -> tuple[int, int]:
     query = """
         SELECT
             COUNT(*) AS total_customers,
             COUNT(DISTINCT customer_id) AS unique_customer_ids
-        FROM IDENTIFIER(:table_name)
+        FROM IDENTIFIER(:customers_table_to_read)
     """
 
     with connection.cursor() as cursor:
         cursor.execute(
             query,
-            parameters={"table_name": table_name},
+            parameters={"customers_table_to_read": customers_table_to_read},
         )
         total_customers, unique_customer_ids = cursor.fetchone()
 
@@ -32,7 +36,7 @@ def count_customers(connection, table_name: str) -> tuple[int, int]:
 
 
 def fetch_customer_batches(
-    connection, table_name: str, batch_size: int
+    connection, customers_table_to_read: str, batch_size: int
 ) -> Iterator[list[Row]]:
     """Yield customer records in batches without collecting the full result."""
     if batch_size < 1:
@@ -45,43 +49,15 @@ def fetch_customer_batches(
             billing_city,
             billing_postal_code,
             billing_country_code
-        FROM IDENTIFIER(:table_name)
+        FROM IDENTIFIER(:customers_table_to_read)
         ORDER BY customer_id
     """
 
     with connection.cursor() as cursor:
-        cursor.execute(query, parameters={"table_name": table_name})
+        cursor.execute(query, parameters={"customers_table_to_read": customers_table_to_read})
 
         while True:
             customers = cursor.fetchmany(batch_size)
             if not customers:
                 break
             yield customers
-
-
-def fetch_customer(connection, table_name: str, customer_id: str) -> Row:
-    """Read one customer, rejecting missing or duplicate source IDs."""
-    query = """
-        SELECT
-            customer_id,
-            legal_name,
-            billing_city,
-            billing_postal_code,
-            billing_country_code
-        FROM IDENTIFIER(:table_name)
-        WHERE customer_id = :customer_id
-        LIMIT 2
-    """
-
-    with connection.cursor() as cursor:
-        cursor.execute(query, parameters={
-            "table_name": table_name,
-            "customer_id": customer_id,
-        })
-        customers = cursor.fetchmany(2)
-
-    if not customers:
-        raise ValueError("No customer found with that source ID")
-    if len(customers) > 1:
-        raise ValueError("More than one customer has that source ID")
-    return customers[0]

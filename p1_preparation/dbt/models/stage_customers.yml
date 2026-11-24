@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: stage_customers
+    description: >-
+      One row per source customer, with the five fields used by the Salesforce
+      loader. IDs stay unchanged; surrounding spaces are removed from other
+      fields and country codes are capitalised. Empty values become null so
+      missing data fails the tests. No customers are filtered out.
+    columns:
+      - name: customer_id
+        data_tests:
+          - not_null
+          - unique
+      - name: legal_name
+        data_tests:
+          - not_null
+      - name: billing_city
+        data_tests:
+          - not_null
+      - name: billing_postal_code
+        description: Text, preserving leading zeros such as 0110.
+        data_tests:
+          - not_null
+      - name: billing_country_code
+        data_tests:
+          - not_null

@@ -11,6 +11,7 @@ class FakeDatabase:
 
     def __init__(self, customers):
         self.customers = iter(customers)
+        self.parameters = {}
         self.query_count = 0
         self.fetch_count = 0
 
@@ -19,6 +20,7 @@ class FakeDatabase:
         yield self
 
     def execute(self, query, parameters):
+        self.parameters = parameters
         self.query_count += 1
 
     def fetchmany(self, size):

@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import Mock, patch
 
-from customer_migration.salesforce import (
+from p2_migration.salesforce import (
     compare_account,
     connect_to_salesforce,
     read_account,
@@ -69,9 +69,24 @@ class SalesforceTests(unittest.TestCase):
         self.settings["SALESFORCE_MY_DOMAIN_URL"] = "https://example.com"
 
         # Act and Assert
-        with patch.dict(os.environ, self.settings, clear=True):
-            with self.assertRaises(ValueError):
-                connect_to_salesforce(self.session)
+        with (
+            patch.dict(os.environ, self.settings, clear=True),
+            self.assertRaises(ValueError),
+        ):
+            connect_to_salesforce(self.session)
+        self.session.post.assert_not_called()
+
+    # Missing credentials are reported before starting an authentication request.
+    def test_missing_settings_prevent_authentication(self):
+        # Arrange
+        del self.settings["SALESFORCE_CLIENT_SECRET"]
+
+        # Act and Assert
+        with (
+            patch.dict(os.environ, self.settings, clear=True),
+            self.assertRaisesRegex(ValueError, "Missing Salesforce settings: SALESFORCE_CLIENT_SECRET"),
+        ):
+            connect_to_salesforce(self.session)
         self.session.post.assert_not_called()
 
     # Failed sign-in reports the status without exposing the response body.
@@ -80,9 +95,11 @@ class SalesforceTests(unittest.TestCase):
         self.session.post.return_value = response_with(400, {"error": "example-secret"})
 
         # Act and Assert
-        with patch.dict(os.environ, self.settings, clear=True):
-            with self.assertRaisesRegex(RuntimeError, r"^Salesforce authentication failed \(HTTP 400\)$"):
-                connect_to_salesforce(self.session)
+        with (
+            patch.dict(os.environ, self.settings, clear=True),
+            self.assertRaisesRegex(RuntimeError, r"^Salesforce authentication failed \(HTTP 400\)$"),
+        ):
+            connect_to_salesforce(self.session)
         self.assertEqual(self.session.headers, {})
 
     # Both a new record and a later update use the same external-ID endpoint.

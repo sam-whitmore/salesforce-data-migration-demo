@@ -1,0 +1,13 @@
+name: customer_preparation
+version: '1.0.0'
+config-version: 2
+profile: customer_preparation
+
+model-paths: [models]
+
+flags:
+  send_anonymous_usage_stats: false
+
+models:
+  customer_preparation:
+    +materialized: view

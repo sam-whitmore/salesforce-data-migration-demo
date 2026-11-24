@@ -6,3 +6,9 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Generated dbt files.
+p1_preparation/dbt/target/
+p1_preparation/dbt/logs/
+p1_preparation/dbt/dbt_packages/
+p1_preparation/dbt/.user.yml

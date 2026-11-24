@@ -1,6 +1,6 @@
 import unittest
 
-from customer_migration.mapping import prepare_salesforce_account
+from p2_migration.mapping import prepare_salesforce_account
 
 
 class PrepareSalesforceAccountTests(unittest.TestCase):
