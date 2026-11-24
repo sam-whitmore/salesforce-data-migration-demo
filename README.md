@@ -4,9 +4,11 @@
 
 I created this project in response to Gallagher's advertised [Data Engineer](https://careers.gallagher.com/jobs/8676662-data-engineer) opportunity. The goal is to move customer and licence data into Salesforce and check that it arrived correctly.
 
-So far, Python reads 20 fictional customers from Databricks, six at a time. Each batch contains customer IDs, names, cities, postcodes and country codes. The program reports each batch's size and the total retrieved. This lets us practise processing data in manageable groups; performance with large datasets has not yet been tested.
+So far, Python reads 20 fictional customers from Databricks, six at a time, and checks their values. It reports any rejected records and their reasons, then totals the valid and rejected customers. Performance with large datasets has not yet been tested.
 
-Next, I will add checks for missing or invalid values, prepare the records for Salesforce, and send them there. Salesforce is not connected yet.
+The checks require non-empty text for customer IDs, names, cities, postcodes and country codes. Country codes must have two uppercase letters; NZ postcodes must have [four digits, including leading zeros](https://www.nzpost.co.nz/personal/sending-in-nz/postcodes). Values are checked without being changed. These are basic format checks, not address verification or duplicate detection.
+
+Next, I will prepare the records for Salesforce and send them there. Salesforce is not connected yet.
 
 ## Run Locally
 
@@ -54,6 +56,8 @@ Batch 2: 6 customers
 Batch 3: 6 customers
 Batch 4: 2 customers
 Total customers retrieved: 20
+Valid customers: 20
+Rejected customers: 0
 ```
 
 An optional PyArrow warning may appear; this query works without it.
@@ -64,4 +68,4 @@ An optional PyArrow warning may appear; this query works without it.
 python -m unittest discover -s tests -v
 ```
 
-The tests use a small simulated database, so no credentials are needed. They check that customers arrive once, batches are fetched only when requested, and empty results and invalid batch sizes are handled. They do not check the live Databricks table.
+The tests cover batching and validation using sample records, so no credentials are needed. They check missing and invalid values, preserve leading zeros, and confirm that validation leaves the original data unchanged. They do not check the live Databricks table.
