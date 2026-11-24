@@ -57,3 +57,31 @@ def fetch_customer_batches(
             if not customers:
                 break
             yield customers
+
+
+def fetch_customer(connection, table_name: str, customer_id: str) -> Row:
+    """Read one customer, rejecting missing or duplicate source IDs."""
+    query = """
+        SELECT
+            customer_id,
+            legal_name,
+            billing_city,
+            billing_postal_code,
+            billing_country_code
+        FROM IDENTIFIER(:table_name)
+        WHERE customer_id = :customer_id
+        LIMIT 2
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={
+            "table_name": table_name,
+            "customer_id": customer_id,
+        })
+        customers = cursor.fetchmany(2)
+
+    if not customers:
+        raise ValueError("No customer found with that source ID")
+    if len(customers) > 1:
+        raise ValueError("More than one customer has that source ID")
+    return customers[0]
