@@ -1,0 +1,12 @@
+from collections.abc import Mapping
+
+
+def prepare_salesforce_account(customer: Mapping[str, object]) -> dict[str, object]:
+    """Map a customer that passed validation to Salesforce Account fields."""
+    return {
+        "Source_Customer_ID__c": customer["customer_id"],
+        "Name": customer["legal_name"],
+        "BillingCity": customer["billing_city"],
+        "BillingPostalCode": customer["billing_postal_code"],
+        "BillingCountryCode": customer["billing_country_code"],
+    }
