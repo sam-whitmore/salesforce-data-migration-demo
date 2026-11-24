@@ -1,6 +1,8 @@
 import os
+from collections.abc import Iterator
 
 from databricks import sql
+from databricks.sql.types import Row
 
 
 def connect_to_databricks():
@@ -27,3 +29,31 @@ def count_customers(connection, table_name: str) -> tuple[int, int]:
         total_customers, unique_customer_ids = cursor.fetchone()
 
     return total_customers, unique_customer_ids
+
+
+def fetch_customer_batches(
+    connection, table_name: str, batch_size: int
+) -> Iterator[list[Row]]:
+    """Yield customer records in batches without collecting the full result."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+
+    query = """
+        SELECT
+            customer_id,
+            legal_name,
+            billing_city,
+            billing_postal_code,
+            billing_country_code
+        FROM IDENTIFIER(:table_name)
+        ORDER BY customer_id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={"table_name": table_name})
+
+        while True:
+            customers = cursor.fetchmany(batch_size)
+            if not customers:
+                break
+            yield customers
