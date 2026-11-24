@@ -100,7 +100,7 @@ Accounts updated: 1
 Accounts verified: 20
 ```
 
-One account already existed from the single-customer check. All five mapped fields matched for every account.
+One account already existed from the single-customer check. All five mapped fields matched for every account. A subsequent run updated all 20 accounts without creating new ones.
 
 Invalid customers are reported and skipped. A save or verification failure stops the run; earlier writes remain in Salesforce. Rerunning with the same source IDs updates the same accounts. Recovery currently means rerunning, rather than resuming from a saved checkpoint.
 
@@ -119,3 +119,5 @@ python -m unittest discover -s tests -v
 ```
 
 The tests cover extraction, validation, mapping, Salesforce requests and the batch workflow, including failures. They use sample records and simulated responses, without credentials or live connections.
+
+[GitHub Actions](.github/workflows/tests.yml) runs the same tests on each push and pull request, using Python 3.13 on Linux. Results appear in the repository's **Actions** tab. No Databricks or Salesforce credentials are needed.
