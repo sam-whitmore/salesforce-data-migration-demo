@@ -1,0 +1,79 @@
+version: 2
+
+unit_tests:
+  # Clean mapped fields without changing IDs, internal spaces or leading zeros.
+  - name: normalises_customer_fields
+    model: stage_customers  # Act: run the existing SQL model.
+    given:  # Arrange: substitute these rows for the source data.
+      - input: source('crm', 'customers_v1')
+        rows:
+          - customer_id: " customer-001 "
+            legal_name: "  Example Company  "
+            billing_city: "  Whangārei  "
+            billing_postal_code: "  0110  "
+            billing_country_code: "  nz  "
+          - customer_id: "customer-002"
+            legal_name: "Another Company"
+            billing_city: "Cambridge"
+            billing_postal_code: "3434"
+            billing_country_code: "NZ"
+    expect:  # Assert: compare the model's output with these rows.
+      rows:
+        - customer_id: " customer-001 "
+          legal_name: "Example Company"
+          billing_city: "Whangārei"
+          billing_postal_code: "0110"
+          billing_country_code: "NZ"
+        - customer_id: "customer-002"
+          legal_name: "Another Company"
+          billing_city: "Cambridge"
+          billing_postal_code: "3434"
+          billing_country_code: "NZ"
+
+  # Empty and space-only fields become null rather than appearing populated.
+  - name: converts_blank_customer_fields_to_null
+    model: stage_customers  # Act
+    given:  # Arrange
+      - input: source('crm', 'customers_v1')
+        rows:
+          - customer_id: "customer-003"
+            legal_name: ""
+            billing_city: ""
+            billing_postal_code: ""
+            billing_country_code: ""
+          - customer_id: "customer-004"
+            legal_name: "   "
+            billing_city: "   "
+            billing_postal_code: "   "
+            billing_country_code: "   "
+    expect:  # Assert
+      rows:
+        - customer_id: "customer-003"
+          legal_name: null
+          billing_city: null
+          billing_postal_code: null
+          billing_country_code: null
+        - customer_id: "customer-004"
+          legal_name: null
+          billing_city: null
+          billing_postal_code: null
+          billing_country_code: null
+
+  # Missing values stay null; the model leaves their rejection to data checks.
+  - name: preserves_null_customer_fields
+    model: stage_customers  # Act
+    given:  # Arrange
+      - input: source('crm', 'customers_v1')
+        rows:
+          - customer_id: null
+            legal_name: null
+            billing_city: null
+            billing_postal_code: null
+            billing_country_code: null
+    expect:  # Assert
+      rows:
+        - customer_id: null
+          legal_name: null
+          billing_city: null
+          billing_postal_code: null
+          billing_country_code: null
