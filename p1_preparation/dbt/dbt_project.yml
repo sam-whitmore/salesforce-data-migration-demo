@@ -10,4 +10,7 @@ flags:
 
 models:
   customer_preparation:
-    +materialized: view
+    stage_customers:
+      +materialized: table
+      +file_format: delta
+      +alias: "{{ var('customers_snapshot_table_name') }}"

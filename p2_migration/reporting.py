@@ -85,10 +85,11 @@ def open_run_report(customers_table_to_read: str, *, load: bool) -> Iterator[Mig
     with report_path.open("x", encoding="utf-8") as file:
         report = MigrationReport(file=file)
         report.write_event("run_started", customers_table=customers_table_to_read)
-        print(f"Run report: {report_path}")
+        print(f"Run report: {report_path}", flush=True)
         try:
             yield report
         finally:
             # A stopped run remains failed unless processing explicitly finishes.
             report.write_summary()
-            print(f"Run outcome: {report.status}")
+            print(f"\nRun outcome: {report.status}")
+            print(f"Report saved: {report_path}")

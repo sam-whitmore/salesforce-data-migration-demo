@@ -19,7 +19,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Preview customers or load them into Salesforce.")
     parser.add_argument(
         "--load", action="store_true",
-        help="Build and test the customer view, then save and verify Salesforce accounts",
+        help="Build and test a customer snapshot, then save and verify Salesforce accounts",
     )
     return parser.parse_args(argv)
 

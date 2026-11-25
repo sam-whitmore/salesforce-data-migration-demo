@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from dbt.artifacts.schemas.run import RunExecutionResult
 from dbt.cli.main import dbtRunner
@@ -11,11 +12,14 @@ class PreparationError(RuntimeError):
 
 
 def prepare_customers(*, load: bool) -> str:
-    """Select the original Databricks table for preview or build its prepared view for loading."""
+    """Select the original table for preview or build and test a separate snapshot for loading."""
     databricks_customers_table = os.environ.get("DATABRICKS_CUSTOMERS_TABLE")
     if not databricks_customers_table:
         raise PreparationError("Missing setting: DATABRICKS_CUSTOMERS_TABLE")
+    print("\n1. Preparation\n" + "=" * 60, flush=True)
+    print(f"Source: {databricks_customers_table}", flush=True)
     if not load:
+        print("Preview only: read the source without creating a snapshot.")
         return databricks_customers_table
 
     databricks_customers_table_parts = databricks_customers_table.split(".")
@@ -32,7 +36,9 @@ def prepare_customers(*, load: bool) -> str:
     if not databricks_token:
         raise PreparationError("Missing setting: DATABRICKS_TOKEN")
     os.environ["DBT_ENV_SECRET_DATABRICKS_TOKEN"] = databricks_token
+    customers_snapshot_table_name = f"customers_snapshot_{uuid4().hex}"
     dbt_project_directory = str(Path(__file__).resolve().parent / "dbt")
+    print("Building and testing a customer snapshot...\n", flush=True)
     dbt_build = dbtRunner().invoke([
         "build", # Build the selected model and run its associated tests
         "--project-dir", dbt_project_directory, # Where the dbt project lives
@@ -42,6 +48,7 @@ def prepare_customers(*, load: bool) -> str:
             "databricks_customers_catalog": databricks_customers_catalog,
             "databricks_customers_schema": databricks_customers_schema,
             "databricks_customers_table_name": databricks_customers_table_name,
+            "customers_snapshot_table_name": customers_snapshot_table_name,
         }),
     ])
     if not dbt_build.success:
@@ -49,9 +56,10 @@ def prepare_customers(*, load: bool) -> str:
     if not isinstance(dbt_build.result, RunExecutionResult):
         raise PreparationError("dbt did not return build results")
 
-    # Read the actual view name from dbt so the loader follows its configuration.
+    # Read the tested snapshot's full name from dbt so extraction uses the same table.
     for entry in dbt_build.result.results:
         if entry.node.resource_type == "model" and entry.node.name == "stage_customers":
             if entry.node.relation_name:
-                return entry.node.relation_name # `relation_name` is dbt's term for the full database name of the table or view. This example ought to return `workspace`.`migration`.`stage_customers`
-    raise PreparationError("dbt did not return the prepared customer view")
+                print(f"\nCustomer snapshot: {entry.node.relation_name}", flush=True)
+                return entry.node.relation_name # `relation_name` is dbt's term for the full database name, including the catalog, schema and table.
+    raise PreparationError("dbt did not return the prepared customer snapshot")
