@@ -141,6 +141,20 @@ The dbt model is still called `stage_customers`. Its database table is named `wo
 
 Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup and resuming from an existing snapshot are not implemented yet. A rerun creates a fresh snapshot. This is a stored copy for one load, not dbt's separate change-history feature called `snapshot`. The original source table and any old `stage_customers` view are left untouched.
 
+## Check an Interrupted Load
+
+Use the report path printed by the load, replacing `YOUR_RUN_ID` below:
+
+```bash
+python main.py --reconcile reports/YOUR_RUN_ID.jsonl
+```
+
+This reads the report to find an account load attempt without recorded verification. It reads that customer from the saved snapshot and compares the five mapped fields with Salesforce. It does not run dbt, save accounts, change the report or resume loading. `--reconcile` cannot be combined with `--load`.
+
+Matching fields mean the account matches **now**, not that a particular request succeeded or its automation ran only once. Differences, an unavailable account or a failed check produce a nonzero exit. With no recorded uncertain attempt, the command exits successfully without contacting either service; this does not establish that the migration finished or recheck previously verified accounts.
+
+New reports record `DATABRICKS_SERVER_HOSTNAME` and `SALESFORCE_MY_DOMAIN_URL`, without tokens or client credentials. Before checking an uncertain account, reconciliation requires those addresses to match the current settings exactly. This checks configured addresses, not permanent workspace or organisation IDs. The snapshot must still exist unchanged. Older reports missing the addresses or matching attempt entries, and malformed reports, require manual inspection. A [Salesforce lookup returning HTTP 404](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-upsert-get.html) stays unresolved rather than being treated as permission to create an account.
+
 ## Tests
 
 See [what the tests protect](tests/README.md) for their responsibilities, intentional overlap and limits.

@@ -20,6 +20,7 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 | [test_salesforce.py](test_salesforce.py) | Are requests authenticated and addressed correctly, and is each successful save followed by verification without unsafe replay? |
 | [test_main.py](test_main.py) | Do the phases work together, preserve preview behaviour, and report complete, incomplete and failed loads accurately? |
 | [test_reporting.py](test_reporting.py) | Is the pending account still recorded when a process exits without closing its report or writing a final summary? |
+| [test_reconcile.py](test_reconcile.py) | Does reconciliation check the destinations, select the uncertain attempt, compare its saved snapshot, and leave accounts and reports unchanged? |
 
 ## Similar examples are not always duplicate tests
 

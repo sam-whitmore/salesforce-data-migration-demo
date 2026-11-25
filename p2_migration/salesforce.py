@@ -10,6 +10,10 @@ API_VERSION = "68.0"
 EXTERNAL_ID_FIELD = "Source_Customer_ID__c"
 
 
+class AccountUnavailableError(RuntimeError):
+    """The Account lookup returned 404; absence and lack of access can look alike."""
+
+
 def _salesforce_url(value: str) -> str:
     """Check the destination before sending credentials or an access token."""
     url = urlsplit(value)
@@ -93,6 +97,8 @@ def read_account(
         _account_url(instance_url, customer_id),
         read_only=True,
     )
+    if response.status_code == 404:
+        raise AccountUnavailableError("Salesforce account unavailable (HTTP 404)")
     if response.status_code != 200:
         raise RuntimeError(f"Salesforce account read failed (HTTP {response.status_code})")
     return response.json()
