@@ -65,10 +65,13 @@ class PrepareCustomersTests(unittest.TestCase):
         customers_table_to_read = prepare_customers(load=True)
 
         # Assert
-        self.invoke.assert_called_once_with([
+        self.invoke.assert_called_once()
+        arguments = self.invoke.call_args.args[0]
+        self.assertEqual(arguments[:-1], [
             "build", "--project-dir", dbt_project_directory, "--profiles-dir", dbt_project_directory,
-            "--select", "stage_customers", "--vars", json.dumps(dbt_variables),
+            "--select", "stage_customers", "--vars",
         ])
+        self.assertEqual(json.loads(arguments[-1]), dbt_variables)
         self.assertEqual(
             customers_table_to_read,
             "`example`.`prepared`.`customers_snapshot_00000000000000000000000000000001`",

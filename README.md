@@ -92,6 +92,10 @@ python main.py --load
 
 Each batch is prepared, saved and checked before the next batch is fetched. Salesforce requests currently run one account at a time, using one login for the run. The final report counts created, updated and verified accounts.
 
+Salesforce requests make at most three attempts. Reads retry timeouts, broken connections and HTTP 429, 500, 502, 503 or 504, normally waiting one then two seconds. A valid `Retry-After` header can extend each wait to 30 seconds; a longer requested wait stops the run. Other HTTP errors, including 401 and 403, and certificate errors are not retried.
+
+Authentication and saves retry only a connection timeout that [Requests identifies as safe to retry](https://requests.readthedocs.io/en/latest/_modules/requests/exceptions/#ConnectTimeout). A lost save response leaves the outcome uncertain, so the run stops for inspection. Retrying a verification read never repeats the save. The console identifies each retry without printing credentials or raw error details.
+
 With all 20 Accounts already present, a successful rerun ends with:
 
 ```text
@@ -136,6 +140,8 @@ The dbt model is still called `stage_customers`. Its database table is named `wo
 Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup and resuming from an existing snapshot are not implemented yet. A rerun creates a fresh snapshot. This is a stored copy for one load, not dbt's separate change-history feature called `snapshot`. The original source table and any old `stage_customers` view are left untouched.
 
 ## Tests
+
+See [what the tests protect](tests/README.md) for their responsibilities, intentional overlap and limits.
 
 ```bash
 PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
