@@ -4,7 +4,7 @@
 
 I created this project in response to Gallagher's advertised [Data Engineer](https://careers.gallagher.com/jobs/8676662-data-engineer) opportunity. The goal is to move customer and licence data into Salesforce and check that it arrived correctly.
 
-Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original source without writing to either system. With `--load`, dbt first prepares and tests a customer view. Python then reads that view, saves each valid account and reads it back to check all five mapped fields. All 20 sample customers were loaded and verified before dbt was added; the integrated dbt workflow has not yet been run against the live systems. Large-scale performance has not been tested.
+Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original source without writing to either system. With `--load`, dbt first prepares and tests a customer view. Python then reads that view, saves each valid account and reads it back to check all five mapped fields. The complete dbt-to-Salesforce workflow has updated and verified all 20 sample customers. Large-scale performance has not been tested.
 
 The checks require non-empty text for customer IDs, names, cities, postcodes and country codes. Country codes must have two uppercase letters; NZ postcodes must have [four digits, including leading zeros](https://www.nzpost.co.nz/personal/sending-in-nz/postcodes). These are format checks, not address verification. A full load also checks that source IDs are present and unique before sending records.
 
@@ -86,21 +86,28 @@ python main.py --load
 
 Each batch is prepared, saved and checked before the next batch is fetched. Salesforce requests currently run one account at a time, using one login for the run. The final report counts created, updated and verified accounts.
 
-Final output from the verified run on 25 November 2026:
+With all 20 Accounts already present, a successful rerun ends with:
 
 ```text
 Total customers retrieved: 20
 Valid customers: 20
 Rejected customers: 0
 Accounts prepared for Salesforce: 20
-Accounts created: 19
-Accounts updated: 1
+Accounts created: 0
+Accounts updated: 20
 Accounts verified: 20
+Run outcome: complete
 ```
 
-One account already existed from the single-customer check. All five mapped fields matched for every account. A subsequent run updated all 20 accounts without creating new ones.
+Each load saves a report in `reports/` and prints its path. The `.jsonl` file contains one JSON record per line: the start, rejected customer IDs and reasons, verified accounts, and a final summary. Records are written as processing progresses, without accumulating them in memory. Git ignores these local reports.
 
-During migration, customers rejected by the Python checks are reported and skipped. A failed dbt data check stops the entire run before migration. A save or verification failure stops the run; earlier writes remain in Salesforce. Rerunning with the same source IDs updates the same accounts. Recovery currently means rerunning, rather than resuming from a saved checkpoint.
+| Load outcome | Meaning | Exit status |
+| --- | --- | --- |
+| `complete` | Every retrieved customer was verified; an empty source completes with zero counts. | 0 |
+| `incomplete` | Processing finished, but some customers were rejected. Valid customers were still loaded. | 1 |
+| `failed` | An error or interruption stopped processing. Earlier writes may remain in Salesforce. | Nonzero |
+
+Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A stopped load records its progress where possible; an unverified customer may already have been saved. A report without a final summary does not establish success. Recovery still means rerunning with the same source IDs, not resuming from a checkpoint.
 
 The loader uses Salesforce API v68.0 and updates only the mapped fields. Keep the source table unchanged during a run; the view is not a snapshot, and testing and extraction are separate queries.
 
@@ -120,9 +127,9 @@ The view is currently `workspace.migration.stage_customers`, configured through 
 ## Tests
 
 ```bash
-python -m unittest discover -s tests -v
+PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 ```
 
-The tests cover extraction, validation, mapping, Salesforce requests and the batch workflow, including failures. They use sample records and simulated responses, without credentials or live connections.
+The tests cover extraction, validation, mapping, Salesforce requests and the batch workflow, including run outcomes and saved reports. They use sample records, simulated responses and temporary report files. `PYTHON_DOTENV_DISABLED=1` prevents dbt from automatically reading a local `.env` file during these offline checks.
 
 [GitHub Actions](.github/workflows/tests.yml) runs the same tests and checks the dbt project configuration on each push and pull request, using Python 3.13 on Linux. Results appear in the repository's **Actions** tab. These checks need no credentials; dbt's SQL and data tests run against Databricks as the first phase of `python main.py --load`.

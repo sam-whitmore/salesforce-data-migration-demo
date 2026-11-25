@@ -1,7 +1,12 @@
+import json
 import os
+import runpy
+import sys
 import unittest
 from contextlib import ExitStack, nullcontext, redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 import requests
@@ -12,6 +17,7 @@ from dbt.artifacts.schemas.run import RunExecutionResult
 from main import main
 from p1_preparation.prepare import PreparationError
 from p2_migration.migrate import MigrationError
+from p2_migration.reporting import MigrationReport
 from tests.fake_database import FakeDatabase
 
 
@@ -34,6 +40,9 @@ class MainTests(unittest.TestCase):
         self.output = StringIO()
         resources.enter_context(redirect_stdout(self.output))
         resources.enter_context(patch("main.load_dotenv"))
+        temporary_directory = resources.enter_context(TemporaryDirectory())
+        self.report_directory = Path(temporary_directory) / "reports"
+        resources.enter_context(patch("p2_migration.reporting.REPORT_DIRECTORY", self.report_directory))
         resources.enter_context(patch.dict(os.environ, {
             "DATABRICKS_CUSTOMERS_TABLE": "test.raw.customers",
             "DATABRICKS_TOKEN": "example-token",
@@ -66,6 +75,12 @@ class MainTests(unittest.TestCase):
             return_value=("created", {"Id": "example-account"}),
         ))
 
+    def read_report(self):
+        """Read the one report produced by this test's load."""
+        reports = list(self.report_directory.glob("*.jsonl"))
+        self.assertEqual(len(reports), 1)
+        return [json.loads(line) for line in reports[0].read_text(encoding="utf-8").splitlines()]
+
     # The default command prepares multiple batches without contacting Salesforce.
     def test_preview_does_not_authenticate_or_save(self):
         # Arrange
@@ -82,6 +97,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("Batch 2: 1 customers", self.output.getvalue())
         self.assertIn("Accounts prepared for Salesforce: 7", self.output.getvalue())
         self.assertNotIn("Accounts verified:", self.output.getvalue())
+        self.assertFalse(self.report_directory.exists())
 
     # All batches share one login and distinguish newly created accounts from updates.
     def test_loads_multiple_batches_and_reports_verified_totals(self):
@@ -105,9 +121,53 @@ class MainTests(unittest.TestCase):
         self.assertIn("Accounts created: 6", self.output.getvalue())
         self.assertIn("Accounts updated: 1", self.output.getvalue())
         self.assertIn("Accounts verified: 7", self.output.getvalue())
+        events = self.read_report()
+        self.assertEqual(events[0]["customers_table"], "test.migration.stage_customers")
+        self.assertEqual(events[-1]["status"], "complete")
+        self.assertEqual(events[-1]["accounts_verified"], 7)
+        self.assertEqual(events[-1]["accounts_created"], 6)
+        self.assertEqual(events[-1]["accounts_updated"], 1)
+        verified_ids = [event["customer_id"] for event in events if event["event"] == "account_verified"]
+        self.assertEqual(verified_ids, loaded_ids)
 
-    # Invalid records are reported and never sent to Salesforce.
-    def test_skips_invalid_customers_and_continues(self):
+    # A genuinely empty source completes without inventing rejected or verified records.
+    def test_empty_source_completes_with_zero_counts(self):
+        # Arrange
+        self.count_customers.return_value = (0, 0)
+
+        # Act
+        main(["--load"])
+
+        # Assert
+        self.save_and_verify.assert_not_called()
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "complete")
+        self.assertEqual(summary["customers_retrieved"], 0)
+        self.assertEqual(summary["accounts_verified"], 0)
+
+    # Progress is already readable on disk when the next customer's load starts.
+    def test_verified_progress_is_saved_before_the_next_account(self):
+        # Arrange
+        self.database.customers = iter([customer_row("first"), customer_row("second")])
+        events_during_load = []
+
+        def save_account(session, instance_url, account):
+            if account["Source_Customer_ID__c"] == "second":
+                events_during_load.extend(self.read_report())
+            return "created", {"Id": "example-account"}
+
+        self.save_and_verify.side_effect = save_account
+
+        # Act
+        main(["--load"])
+
+        # Assert
+        self.assertEqual(events_during_load[-1]["event"], "account_verified")
+        self.assertEqual(events_during_load[-1]["customer_id"], "first")
+        self.assertNotIn("run_finished", [event["event"] for event in events_during_load])
+
+    # Valid records still load, but a rejected record makes the overall load incomplete.
+    def test_rejected_customers_make_the_load_incomplete(self):
         # Arrange
         self.database.customers = iter([
             customer_row("invalid-customer", postcode=110),
@@ -116,7 +176,8 @@ class MainTests(unittest.TestCase):
         self.count_customers.return_value = (2, 2)
 
         # Act
-        main(["--load"])
+        with self.assertRaisesRegex(MigrationError, "Migration incomplete"):
+            main(["--load"])
 
         # Assert
         self.save_and_verify.assert_called_once()
@@ -124,6 +185,61 @@ class MainTests(unittest.TestCase):
         self.assertEqual(sent_account["Source_Customer_ID__c"], "valid-customer")
         self.assertIn("Rejected customers: 1", self.output.getvalue())
         self.assertIn("Accounts verified: 1", self.output.getvalue())
+        events = self.read_report()
+        rejection = next(event for event in events if event["event"] == "customer_rejected")
+        self.assertEqual(rejection["customer_id"], "invalid-customer")
+        self.assertEqual(rejection["reasons"], ["billing_postal_code must be non-empty text"])
+        self.assertEqual(events[-1]["status"], "incomplete")
+        self.assertEqual(events[-1]["customers_rejected"], 1)
+        self.assertEqual(events[-1]["accounts_verified"], 1)
+
+    # Preview remains a read-only inspection, even when records need correcting.
+    def test_preview_reports_rejections_without_failing_or_writing(self):
+        # Arrange
+        self.database.customers = iter([customer_row("invalid-customer", postcode="110")])
+
+        # Act
+        main([])
+
+        # Assert
+        self.assertIn("Rejected customers: 1", self.output.getvalue())
+        self.save_and_verify.assert_not_called()
+        self.assertFalse(self.report_directory.exists())
+
+    # Rejecting every customer cannot be mistaken for a successful empty load.
+    def test_all_rejected_customers_produce_an_incomplete_report(self):
+        # Arrange
+        self.database.customers = iter([customer_row("invalid-customer", postcode="110")])
+        self.count_customers.return_value = (1, 1)
+
+        # Act
+        with self.assertRaisesRegex(MigrationError, "Migration incomplete"):
+            main(["--load"])
+
+        # Assert
+        self.save_and_verify.assert_not_called()
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "incomplete")
+        self.assertEqual(summary["customers_rejected"], 1)
+        self.assertEqual(summary["accounts_verified"], 0)
+
+    # The executable entry point turns an incomplete migration into a nonzero exit.
+    def test_incomplete_load_exits_unsuccessfully(self):
+        # Arrange
+        self.database.customers = iter([customer_row("invalid-customer", postcode="110")])
+        entry_point = Path(__file__).resolve().parents[1] / "main.py"
+
+        # Act
+        with (
+            patch.object(sys, "argv", [str(entry_point), "--load"]),
+            patch("dotenv.load_dotenv"),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            runpy.run_path(str(entry_point), run_name="__main__")
+
+        # Assert
+        self.assertIsInstance(raised.exception.code, str)
+        self.assertIn("Migration incomplete", str(raised.exception.code))
 
     # Duplicate source IDs stop the run before any Salesforce requests.
     def test_duplicate_ids_prevent_loading(self):
@@ -135,6 +251,7 @@ class MainTests(unittest.TestCase):
             main(["--load"])
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
+        self.assertEqual(self.read_report()[-1]["status"], "failed")
 
     # A verification failure stops later accounts and cannot produce a success total.
     def test_stops_loading_after_a_verification_failure(self):
@@ -150,6 +267,10 @@ class MainTests(unittest.TestCase):
             main(["--load"])
         self.assertEqual(self.save_and_verify.call_count, 2)
         self.assertNotIn("Accounts verified:", self.output.getvalue())
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["accounts_verified"], 1)
+        self.assertEqual(summary["unverified_customer_id"], "1")
 
     # Failed preparation stops the workflow before extraction or Salesforce access.
     def test_failed_dbt_build_prevents_migration(self):
@@ -162,6 +283,7 @@ class MainTests(unittest.TestCase):
         self.connect_to_databricks.assert_not_called()
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
+        self.assertFalse(self.report_directory.exists())
 
     # A database failure is identified as Databricks, without showing raw error details.
     def test_databricks_failure_is_reported_during_preview(self):
@@ -189,6 +311,9 @@ class MainTests(unittest.TestCase):
         self.assertIn("Earlier Salesforce writes may have completed", str(raised.exception))
         self.assertEqual(self.save_and_verify.call_count, 1)
         self.assertNotIn("Accounts verified:", self.output.getvalue())
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["accounts_verified"], 1)
 
     # A Salesforce timeout stops later records and explains that a write may have completed.
     def test_salesforce_timeout_stops_the_load(self):
@@ -203,6 +328,65 @@ class MainTests(unittest.TestCase):
         self.assertNotIn("private request details", str(raised.exception))
         self.assertEqual(self.save_and_verify.call_count, 1)
         self.assertNotIn("Accounts verified:", self.output.getvalue())
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["accounts_verified"], 0)
+        self.assertEqual(summary["unverified_customer_id"], "0")
+        self.assertNotIn("private request details", json.dumps(self.read_report()))
+
+    # A report must be writable before customers are read or sent to Salesforce.
+    def test_unwritable_report_prevents_migration(self):
+        # Arrange
+        self.report_directory.write_text("This file prevents creating the reports directory.")
+
+        # Act
+        with self.assertRaisesRegex(MigrationError, "Could not save the migration report"):
+            main(["--load"])
+
+        # Assert
+        self.connect_to_databricks.assert_not_called()
+        self.connect_to_salesforce.assert_not_called()
+        self.save_and_verify.assert_not_called()
+
+    # Ctrl+C records partial progress but does not pretend the current write was undone.
+    def test_keyboard_interrupt_records_an_unverified_customer(self):
+        # Arrange
+        self.database.customers = iter([customer_row("interrupted-customer")])
+        self.save_and_verify.side_effect = KeyboardInterrupt
+
+        # Act
+        with self.assertRaises(KeyboardInterrupt):
+            main(["--load"])
+
+        # Assert
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["unverified_customer_id"], "interrupted-customer")
+
+    # Losing report storage stops further writes without forgetting a verified account.
+    def test_report_write_failure_stops_later_accounts(self):
+        # Arrange
+        self.database.customers = iter([customer_row("first"), customer_row("second")])
+        write_event = MigrationReport.write_event
+
+        def fail_to_record_verification(report, event, **details):
+            if event == "account_verified":
+                raise OSError("report storage unavailable")
+            write_event(report, event, **details)
+
+        # Act
+        with (
+            patch.object(MigrationReport, "write_event", autospec=True, side_effect=fail_to_record_verification),
+            self.assertRaisesRegex(MigrationError, "Could not save the migration report"),
+        ):
+            main(["--load"])
+
+        # Assert
+        self.save_and_verify.assert_called_once()
+        summary = self.read_report()[-1]
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(summary["accounts_verified"], 1)
+        self.assertIsNone(summary["unverified_customer_id"])
 
     # Unexpected programming errors remain visible instead of being labelled network failures.
     def test_unexpected_errors_are_not_disguised(self):
