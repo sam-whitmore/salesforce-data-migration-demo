@@ -122,7 +122,7 @@ Before each Salesforce save, an `account_load_started` entry is written, flushed
 | `incomplete` | Processing finished, but some customers were rejected. Valid customers were still loaded. | 1 |
 | `failed` | An error or interruption stopped processing. Earlier writes may remain in Salesforce. | Nonzero |
 
-Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A report without a final summary does not establish success. Inspect uncertain saves before rerunning with the same source IDs; automatic resume is not implemented. Older reports without load-attempt entries cannot identify a save interrupted before verification.
+Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A report without a final summary does not establish success. Use the recovery commands below to inspect or resume an interrupted load. Older reports without load-attempt entries cannot identify a save interrupted before verification.
 
 Each load creates a new Delta table containing the prepared rows. dbt's data checks, Python's ID check and batch extraction all read that table. Later source changes or subsequent loads do not replace those rows. The loader uses Salesforce API v68.0 and updates only the mapped fields.
 
@@ -139,7 +139,7 @@ The numbered folders make the flow easy to follow: `p0_data/` holds the sample C
 
 The dbt model is still called `stage_customers`. Its database table is named `workspace.migration.customers_snapshot_<unique_id>`; dbt calls this alternate name an **alias**. Python supplies a fresh name for every load. The full name appears in the terminal and in the migration report's first record. Both phases use the existing `.env` settings.
 
-Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup and resuming from an existing snapshot are not implemented yet. A rerun creates a fresh snapshot. This is a stored copy for one load, not dbt's separate change-history feature called `snapshot`. The original source table and any old `stage_customers` view are left untouched.
+Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup is not implemented. A new `--load` creates a fresh snapshot; `--resume` uses the existing one. This is a stored copy for one load, not dbt's separate change-history feature called `snapshot`. The original source table and any old `stage_customers` view are left untouched.
 
 ## Check an Interrupted Load
 
@@ -154,6 +154,24 @@ This reads the report to find an account load attempt without recorded verificat
 Matching fields mean the account matches **now**, not that a particular request succeeded or its automation ran only once. Differences, an unavailable account or a failed check produce a nonzero exit. With no recorded uncertain attempt, the command exits successfully without contacting either service; this does not establish that the migration finished or recheck previously verified accounts.
 
 New reports record `DATABRICKS_SERVER_HOSTNAME` and `SALESFORCE_MY_DOMAIN_URL`, without tokens or client credentials. Before checking an uncertain account, reconciliation requires those addresses to match the current settings exactly. This checks configured addresses, not permanent workspace or organisation IDs. The snapshot must still exist unchanged. Older reports missing the addresses or matching attempt entries, and malformed reports, require manual inspection. A [Salesforce lookup returning HTTP 404](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-upsert-get.html) stays unresolved rather than being treated as permission to create an account.
+
+## Resume an Interrupted Load
+
+This command **can save accounts**. Use the original report, with the same connection addresses, unchanged snapshot and field mapping:
+
+```bash
+python main.py --resume reports/YOUR_RUN_ID.jsonl
+```
+
+Resume skips previously verified accounts, checks any uncertain account by readback, then loads unattempted customers. A differing or unavailable uncertain account stops the resume before further saves. Rejected customers are checked again and keep the outcome incomplete if still invalid. A completed run does nothing. `--load`, `--reconcile` and `--resume` are separate modes.
+
+Progress is appended to the same report. `resume_started` marks each attempt; `account_reconciled` records matching fields without claiming another create or update. If resume is interrupted, use the same command and report again. Keep the report intact; truncated or contradictory history requires manual inspection.
+
+The final verified total includes previous verifications, reconciled accounts and successful saves. Created, updated and rejected counts describe the latest attempt. Previously verified accounts are not read from Salesforce again, so later edits there are not detected.
+
+Resume scans the retained snapshot in batches and checks that previously verified IDs still exist before proceeding. It retains verified IDs in memory and adds a snapshot scan when earlier progress exists; large-scale recovery performance has not been tested. It relies on the snapshot remaining unchanged and does not provide exactly-once Salesforce automation.
+
+A local [file lock](https://docs.python.org/3.13/library/fcntl.html#fcntl.flock) prevents simultaneous loading or resuming of the same report on macOS/Linux. It does not coordinate separate reports or copies across machines. Run one migration at a time against the destination.
 
 ## Tests
 

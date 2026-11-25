@@ -197,6 +197,11 @@ class ReconciliationTests(unittest.TestCase):
             "summary mismatch": [START, {"event": "run_finished", "unverified_customer_id": "unknown"}],
             "events after finish": [START, {"event": "run_finished"}, ATTEMPT],
             "non-object": [START, []],
+            "repeated verified customer": [START, ATTEMPT, VERIFIED, ATTEMPT],
+            "reconciled without resume": [START, ATTEMPT, {**VERIFIED, "event": "account_reconciled"}],
+            "complete with uncertainty": [START, ATTEMPT, {"event": "run_finished", "status": "complete"}],
+            "resume after completion": [START, {"event": "run_finished", "status": "complete"}, {"event": "resume_started"}],
+            "unknown outcome": [START, {"event": "run_finished", "status": "unexpected"}],
         }
         for name, events in cases.items():
             with self.subTest(name=name):
@@ -279,18 +284,24 @@ class ReconciliationTests(unittest.TestCase):
                 self.session.patch.assert_not_called()
 
     # Conflicting modes fail at argument parsing, before preparation or reconciliation.
-    def test_load_and_reconcile_cannot_be_combined(self):
+    def test_load_reconcile_and_resume_cannot_be_combined(self):
         # Arrange
-        arguments = ["--load", "--reconcile", str(self.report_path)]
+        combinations = (
+            ["--load", "--reconcile", str(self.report_path)],
+            ["--load", "--resume", str(self.report_path)],
+            ["--reconcile", str(self.report_path), "--resume", str(self.report_path)],
+        )
+        for arguments in combinations:
+            with self.subTest(arguments=arguments):
 
-        # Act
-        with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as raised:
-            main(arguments)
+                # Act
+                with redirect_stderr(StringIO()), self.assertRaises(SystemExit) as raised:
+                    main(arguments)
 
-        # Assert
-        self.assertEqual(raised.exception.code, 2)
-        self.prepare.assert_not_called()
-        self.connect_database.assert_not_called()
+                # Assert
+                self.assertEqual(raised.exception.code, 2)
+                self.prepare.assert_not_called()
+                self.connect_database.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -21,6 +21,7 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 | [test_main.py](test_main.py) | Do the phases work together, preserve preview behaviour, and report complete, incomplete and failed loads accurately? |
 | [test_reporting.py](test_reporting.py) | Is the pending account still recorded when a process exits without closing its report or writing a final summary? |
 | [test_reconcile.py](test_reconcile.py) | Does reconciliation check the destinations, select the uncertain attempt, compare its saved snapshot, and leave accounts and reports unchanged? |
+| [test_resume.py](test_resume.py) | Does resume skip recorded successes, resolve uncertainty without another save, and preserve recoverable progress through another interruption? |
 
 ## Similar examples are not always duplicate tests
 
@@ -29,6 +30,8 @@ The retry tests exercise the policy directly. The Salesforce tests check that th
 The workflow tests answer another question: after a request fails, does processing stop and does the saved report describe the partial progress? They replace the Salesforce operation, so they do not retest its HTTP handling.
 
 The reporting test deliberately stops a separate local process after recording an attempt. It checks that the report survives an abrupt process exit; it does not simulate a power failure or guarantee disk hardware behaviour.
+
+Resume tests simulate a save followed by a lost response, then resume again and check that the save is not repeated. They also exercise the local file lock, blocked recovery, storage failure, completed runs and rejected customers. These checks use simulated services and do not establish live recovery performance or exactly-once Salesforce automation.
 
 Several input variations use `subTest`, such as short, long and non-numeric postcodes. Each case still runs and failures identify its input. Grouping them keeps one rule together; it does not remove scenarios. Test-method count is therefore not a measure of coverage.
 
