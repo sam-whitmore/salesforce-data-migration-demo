@@ -51,7 +51,7 @@ class MainTests(unittest.TestCase):
         runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
         self.build = runner.return_value.invoke
         self.build.return_value.success = True
-        model = Mock(resource_type="model", relation_name="test.migration.stage_customers")
+        model = Mock(resource_type="model", relation_name="test.migration.customers_snapshot_example")
         model.name = "stage_customers"
         self.build.return_value.result = Mock(
             spec=RunExecutionResult, results=[Mock(node=model)],
@@ -113,7 +113,8 @@ class MainTests(unittest.TestCase):
 
         # Assert
         self.build.assert_called_once()
-        self.assertEqual(self.database.parameters["customers_table_to_read"], "test.migration.stage_customers")
+        self.assertEqual(self.database.parameters["customers_table_to_read"], "test.migration.customers_snapshot_example")
+        self.count_customers.assert_called_once_with(self.database, "test.migration.customers_snapshot_example")
         self.connect_to_salesforce.assert_called_once()
         self.assertEqual(self.save_and_verify.call_count, 7)
         loaded_ids = [call.args[2]["Source_Customer_ID__c"] for call in self.save_and_verify.call_args_list]
@@ -122,7 +123,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("Accounts updated: 1", self.output.getvalue())
         self.assertIn("Accounts verified: 7", self.output.getvalue())
         events = self.read_report()
-        self.assertEqual(events[0]["customers_table"], "test.migration.stage_customers")
+        self.assertEqual(events[0]["customers_table"], "test.migration.customers_snapshot_example")
         self.assertEqual(events[-1]["status"], "complete")
         self.assertEqual(events[-1]["accounts_verified"], 7)
         self.assertEqual(events[-1]["accounts_created"], 6)

@@ -24,6 +24,8 @@ class MigrationError(RuntimeError):
 
 def migrate_customers(customers_table_to_read: str, *, load: bool) -> None:
     """Run the batches and explain expected database, request or validation failures."""
+    phase = "Migration" if load else "Preview"
+    print(f"\n2. {phase}\n" + "=" * 60, flush=True)
     try:
         with open_run_report(customers_table_to_read, load=load) as report:
             process_customer_batches(customers_table_to_read, load=load, report=report)
@@ -61,7 +63,9 @@ def prepare_accounts(
         errors = validate_customer(customer)
         if errors:
             report.reject_customer(customer.get("customer_id"), errors)
-            print(f"  Rejected customer {customer.get('customer_id')!r}: {'; '.join(errors)}")
+            print(f"  Rejected customer {customer.get('customer_id')!r}")
+            for error in errors:
+                print(f"    - {error}")
             continue
         accounts.append(prepare_salesforce_account(customer))
         report.prepared_accounts += 1
@@ -77,10 +81,10 @@ def load_accounts(
     """Record each account immediately after its save and verification succeed."""
     for account in accounts:
         report.current_customer_id = str(account[EXTERNAL_ID_FIELD])
-        print(f"  Loading customer {account[EXTERNAL_ID_FIELD]}")
+        print(f"  Loading customer {account[EXTERNAL_ID_FIELD]}", flush=True)
         outcome, received_account = save_and_verify_account(session, instance_url, account)
         report.record_verified_account(received_account["Id"], outcome)
-        print(f"  Account {received_account['Id']}: {outcome}, verified")
+        print(f"    {outcome.capitalize()}, verified | Salesforce Account: {received_account['Id']}")
 
 
 def process_customer_batches(
@@ -100,11 +104,12 @@ def process_customer_batches(
         batches = fetch_customer_batches(connection, customers_table_to_read, batch_size)
         for batch_number, customers in enumerate(batches, start=1):
             report.total_customers += len(customers)
-            print(f"Batch {batch_number}: {len(customers)} customers")
+            print(f"\nBatch {batch_number}: {len(customers)} customers")
             accounts = prepare_accounts((customer.asDict() for customer in customers), report)
             if load:
                 load_accounts(session, instance_url, accounts, report)
 
+    print("\nSummary\n" + "-" * 60)
     print(f"Total customers retrieved: {report.total_customers}")
     print(f"Valid customers: {report.total_customers - report.rejected_customers}")
     print(f"Rejected customers: {report.rejected_customers}")
