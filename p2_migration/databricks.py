@@ -61,3 +61,22 @@ def fetch_customer_batches(
             if not customers:
                 break
             yield customers
+
+
+def fetch_customer(connection, customers_table_to_read: str, customer_id: str) -> dict[str, object]:
+    """Read one snapshot customer, rejecting missing or ambiguous matches."""
+    query = """
+        SELECT customer_id, legal_name, billing_city, billing_postal_code, billing_country_code
+        FROM IDENTIFIER(:customers_table_to_read)
+        WHERE customer_id = :customer_id
+        LIMIT 2
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={
+            "customers_table_to_read": customers_table_to_read,
+            "customer_id": customer_id,
+        })
+        customers = cursor.fetchmany(2)
+    if len(customers) != 1:
+        raise ValueError("The saved snapshot must contain exactly one matching customer")
+    return customers[0].asDict()
