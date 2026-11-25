@@ -4,7 +4,9 @@
 
 I created this project in response to Gallagher's advertised [Data Engineer](https://careers.gallagher.com/jobs/8676662-data-engineer) opportunity. The goal is to move customer and licence data into Salesforce and check that it arrived correctly.
 
-Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original source without writing to either system. With `--load`, dbt first creates and tests a separate customer snapshot table. Python reads that same table, saves each valid account and reads it back to check all five mapped fields. The complete dbt-to-Salesforce workflow has updated and verified all 20 sample customers. Large-scale performance has not been tested.
+The customer migration works today. Preparation includes the [product and licence models](docs/licence-model.md), validated in a live Databricks run. Salesforce loading still covers customer Accounts only. See the [glossary](GLOSSARY.md) for the business terms.
+
+Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original customer source without writing to either system. With `--load`, dbt creates and tests customer, product and licence snapshots, including their relationships. Python reads the tested customer table, saves each valid Account and checks all five mapped fields by readback. A live run passed all six SQL unit tests and 24 data checks, built all three snapshots, and updated and verified all 20 customer Accounts. Large-scale performance has not been tested.
 
 The checks require non-empty text for customer IDs, names, cities, postcodes and country codes. Country codes must have two uppercase letters; NZ postcodes must have [four digits, including leading zeros](https://www.nzpost.co.nz/personal/sending-in-nz/postcodes). These are format checks, not address verification. A full load also checks that source IDs are present and unique before sending records.
 
@@ -30,6 +32,8 @@ Upload [customers_v1.csv](p0_data/seed/customers_v1.csv) to Databricks. It conta
 
 Use the first row as column names, a comma separator and UTF-8 encoding. Set `billing_postal_code` to `STRING` so values such as `0110` keep their leading zero. `source_revision` can be `BIGINT`. Keep the customer IDs unchanged between uploads.
 
+For `--load`, also upload [products_v1.csv](p0_data/seed/products_v1.csv) and [licences_v1.csv](p0_data/seed/licences_v1.csv) alongside the customer table, named `products_v1` and `licences_v1`. Use `STRING` for IDs, codes and names, `BOOLEAN` for `is_active`, `BIGINT` for seats, and `DATE` for licence dates. Blank cancellation dates must be null. Preview needs only the customer source.
+
 ### 2. Install and configure
 
 ```bash
@@ -41,7 +45,7 @@ cp -n .env.example .env
 
 This creates a separate Python environment and copies the example settings without replacing an existing `.env` file.
 
-Fill in the Databricks settings in `.env`. The Salesforce settings are needed only when loading records:
+Fill in the Databricks settings in `.env`. Salesforce settings are needed for loading and recovery:
 
 | Setting | What to enter |
 | --- | --- |
@@ -84,7 +88,7 @@ Accounts prepared for Salesforce: 20
 
 ### 4. Load and verify the customers
 
-This command **builds and tests a Databricks snapshot table, then creates or updates Salesforce Accounts**. If dbt fails, no Salesforce requests are made:
+This command **builds and tests three Databricks snapshot tables, then creates or updates customer Accounts in Salesforce**. If any dbt check fails, no Salesforce requests are made:
 
 ```bash
 python main.py --load
@@ -124,14 +128,14 @@ Before each Salesforce save, an `account_load_started` entry is written, flushed
 
 Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A report without a final summary does not establish success. Use the recovery commands below to inspect or resume an interrupted load. Older reports without load-attempt entries cannot identify a save interrupted before verification.
 
-Each load creates a new Delta table containing the prepared rows. dbt's data checks, Python's ID check and batch extraction all read that table. Later source changes or subsequent loads do not replace those rows. The loader uses Salesforce API v68.0 and updates only the mapped fields.
+Each load creates three new Delta tables and records their full names in the report. Relationship checks use these snapshots; Python's customer ID check and extraction use the tested customer snapshot. Later source changes or loads do not replace them. The loader uses Salesforce API v68.0 and updates only the mapped customer fields. Product and licence loading is not implemented yet.
 
 ## How the Code Fits Together
 
 [main.py](main.py) coordinates two phases:
 
-1. [prepare_customers()](p1_preparation/prepare.py) selects the original source for preview. With `--load`, it chooses a unique snapshot name, builds and tests that table, and returns its full name.
-2. [migrate_customers()](p2_migration/migrate.py) reads that source in batches, validates and maps the customers, and optionally saves and verifies their Salesforce accounts.
+1. [prepare_migration()](p1_preparation/prepare.py) returns a `MigrationTables` value containing the customer source for preview, or all three tested snapshot names for loading.
+2. [migrate_customers()](p2_migration/migrate.py) reads the selected customer table in batches, validates and maps the rows, and optionally saves and verifies Salesforce Accounts. Load reports retain all three snapshot names.
 
 The numbered folders make the flow easy to follow: `p0_data/` holds the sample CSV, `p1_preparation/` owns dbt, and `p2_migration/` contains the Databricks reader, Salesforce requests, mapping and validation. `main.py` controls execution. Each phase explains its expected failures; unexpected programming errors retain their traceback for debugging.
 
@@ -139,7 +143,7 @@ The numbered folders make the flow easy to follow: `p0_data/` holds the sample C
 
 The dbt model is still called `stage_customers`. Its database table is named `workspace.migration.customers_snapshot_<unique_id>`; dbt calls this alternate name an **alias**. Python supplies a fresh name for every load. The full name appears in the terminal and in the migration report's first record. Both phases use the existing `.env` settings.
 
-Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup is not implemented. A new `--load` creates a fresh snapshot; `--resume` uses the existing one. This is a stored copy for one load, not dbt's separate change-history feature called `snapshot`. The original source table and any old `stage_customers` view are left untouched.
+Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup is not implemented. A new `--load` creates fresh snapshots; `--resume` continues customer loading from the existing customer snapshot. These are stored copies for one load, not dbt's separate change-history feature called `snapshot`. Original source tables and any old `stage_customers` view are left untouched.
 
 ## Check an Interrupted Load
 
@@ -183,6 +187,6 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 
 The tests cover extraction, validation, mapping, Salesforce requests and the batch workflow, including run outcomes and saved reports. They use sample records, simulated responses and temporary report files. `PYTHON_DOTENV_DISABLED=1` prevents dbt from automatically reading a local `.env` file during these offline checks.
 
-[SQL unit tests](p1_preparation/dbt/models/stage_customers_unit_tests.yml) supply example input and expected output for the customer model. They check trimming, country-code capitalisation, leading zeros, unchanged IDs, and blank or null fields. These examples substitute for the source rows during the tests; they are not uploaded into the customer table. The three tests run on Databricks before the snapshot is built during `python main.py --load`. A failure stops preparation before Salesforce loading.
+[SQL unit tests](p1_preparation/dbt/models/stage_customers_unit_tests.yml) supply example input and expected output. Customer tests cover trimming, country-code capitalisation, leading zeros, unchanged IDs, and blanks or nulls. Product tests cover clean labels and retained inactive products; the licence test preserves historical, future and cancelled terms. These examples substitute for source rows and do not alter the uploaded tables. All six unit tests run during `python main.py --load`; a failure stops preparation before Salesforce loading.
 
-[GitHub Actions](.github/workflows/tests.yml) runs the Python tests and parses the dbt configuration on each push and pull request, using Python 3.13 on Linux. It supplies a placeholder snapshot name for parsing, without creating a table. Parsing checks the SQL unit-test definitions but does not execute them; their results and the seven data-check results require a Databricks run.
+[GitHub Actions](.github/workflows/tests.yml) runs the Python tests and parses the dbt configuration on each push and pull request, using Python 3.13 on Linux. It supplies placeholder snapshot names without creating tables. Parsing checks definitions, not SQL behaviour; the six SQL unit tests and 24 data checks across all three models require Databricks execution.

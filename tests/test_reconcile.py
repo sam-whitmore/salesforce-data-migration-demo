@@ -41,7 +41,7 @@ class ReconciliationTests(unittest.TestCase):
             "DATABRICKS_CUSTOMERS_TABLE": "test.raw.changed_source",
             "SALESFORCE_MY_DOMAIN_URL": "https://example.my.salesforce.com",
         }, clear=True))
-        self.prepare = resources.enter_context(patch("main.prepare_customers"))
+        self.prepare = resources.enter_context(patch("main.prepare_migration"))
         self.migrate = resources.enter_context(patch("main.migrate_customers"))
         self.customer = Row(
             customer_id="customer-1", legal_name="Example Company", billing_city="Whangārei",

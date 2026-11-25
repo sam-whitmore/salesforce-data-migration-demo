@@ -3,6 +3,7 @@ from collections.abc import Iterable, Mapping
 import requests
 from databricks.sql.exc import Error as DatabricksError
 
+from p1_preparation.prepare import MigrationTables
 from p2_migration.databricks import (
     connect_to_databricks,
     count_customers,
@@ -23,13 +24,16 @@ class MigrationError(RuntimeError):
     """Customer migration could not complete."""
 
 
-def migrate_customers(customers_table_to_read: str, *, load: bool) -> None:
+def migrate_customers(tables: MigrationTables, *, load: bool) -> None:
     """Run the batches and explain expected database, request or validation failures."""
     phase = "Migration" if load else "Preview"
     print(f"\n2. {phase}\n" + "=" * 60, flush=True)
     try:
-        with open_run_report(customers_table_to_read, load=load) as report:
-            process_customer_batches(customers_table_to_read, load=load, report=report)
+        with open_run_report(
+            tables.customers_table, load=load,
+            products_table=tables.products_table, licences_table=tables.licences_table,
+        ) as report:
+            process_customer_batches(tables.customers_table, load=load, report=report)
     except DatabricksError:
         message = "Could not read customers from Databricks. Check the warehouse, table and access permissions."
         if load:

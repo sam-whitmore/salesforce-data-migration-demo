@@ -114,7 +114,10 @@ def lock_report(file: TextIO) -> Iterator[None]:
 
 
 @contextmanager
-def open_run_report(customers_table_to_read: str, *, load: bool) -> Iterator[MigrationReport]:
+def open_run_report(
+    customers_table_to_read: str, *, load: bool,
+    products_table: str | None = None, licences_table: str | None = None,
+) -> Iterator[MigrationReport]:
     """Save load outcomes locally; previews only keep counters in memory."""
     if not load:
         yield MigrationReport()
@@ -127,6 +130,8 @@ def open_run_report(customers_table_to_read: str, *, load: bool) -> Iterator[Mig
         report.write_event(
             "run_started",
             customers_table=customers_table_to_read,
+            products_table=products_table,
+            licences_table=licences_table,
             databricks_server_hostname=os.environ.get("DATABRICKS_SERVER_HOSTNAME"),
             salesforce_my_domain_url=os.environ.get("SALESFORCE_MY_DOMAIN_URL"),
         )

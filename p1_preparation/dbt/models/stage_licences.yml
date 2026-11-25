@@ -1,0 +1,37 @@
+version: 2
+
+models:
+  - name: stage_licences
+    description: >-
+      One row per licence term in a separate snapshot. All terms are retained;
+      relationships are checked against this run's customer and product snapshots.
+    columns:
+      - name: licence_id
+        data_tests:
+          - not_null
+          - unique
+      - name: customer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stage_customers')
+                field: customer_id
+      - name: product_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stage_products')
+                field: product_id
+      - name: seats
+        data_tests:
+          - not_null
+      - name: starts_on
+        data_tests:
+          - not_null
+      - name: ends_before
+        data_tests:
+          - not_null
+      - name: cancelled_on
+        description: Optional; access ends on this date, including when it equals the start date.

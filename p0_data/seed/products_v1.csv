@@ -1,0 +1,4 @@
+product_id,product_code,product_name,is_active
+01a21526-e400-7798-8207-149471e273a8,KORU-FLEET,Koru Fleet Workspace,true
+01a21526-e401-79fb-be4f-f90babd2d9f2,KORU-VISITOR,Koru Visitor Workspace,true
+01a21526-e402-714b-92a5-640adb149e47,KORU-ASSET-CLASSIC,Koru Asset Workspace Classic,false

@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stage_products
+    description: >-
+      One row per product in a separate snapshot. Clean display fields, preserve IDs
+      and retain inactive products because existing licences can still reference them.
+    columns:
+      - name: product_id
+        data_tests:
+          - not_null
+          - unique
+      - name: product_code
+        data_tests:
+          - not_null
+          - unique
+      - name: product_name
+        data_tests:
+          - not_null
+      - name: is_active
+        data_tests:
+          - not_null

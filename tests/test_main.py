@@ -51,10 +51,13 @@ class MainTests(unittest.TestCase):
         runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
         self.build = runner.return_value.invoke
         self.build.return_value.success = True
-        model = Mock(resource_type="model", relation_name="test.migration.customers_snapshot_example")
-        model.name = "stage_customers"
+        models = []
+        for entity in ("customers", "products", "licences"):
+            model = Mock(resource_type="model", relation_name=f"test.migration.{entity}_snapshot_example")
+            model.name = f"stage_{entity}"
+            models.append(model)
         self.build.return_value.result = Mock(
-            spec=RunExecutionResult, results=[Mock(node=model)],
+            spec=RunExecutionResult, results=[Mock(node=model) for model in models],
         )
 
         self.database = FakeDatabase(customers=[])
@@ -124,6 +127,8 @@ class MainTests(unittest.TestCase):
         self.assertIn("Accounts verified: 7", self.output.getvalue())
         events = self.read_report()
         self.assertEqual(events[0]["customers_table"], "test.migration.customers_snapshot_example")
+        self.assertEqual(events[0]["products_table"], "test.migration.products_snapshot_example")
+        self.assertEqual(events[0]["licences_table"], "test.migration.licences_snapshot_example")
         self.assertEqual(events[-1]["status"], "complete")
         self.assertEqual(events[-1]["accounts_verified"], 7)
         self.assertEqual(events[-1]["accounts_created"], 6)
@@ -286,7 +291,7 @@ class MainTests(unittest.TestCase):
         self.build.return_value.success = False
 
         # Act and Assert
-        with self.assertRaisesRegex(PreparationError, "Customer preparation failed"):
+        with self.assertRaisesRegex(PreparationError, "Migration preparation failed"):
             main(["--load"])
         self.connect_to_databricks.assert_not_called()
         self.connect_to_salesforce.assert_not_called()

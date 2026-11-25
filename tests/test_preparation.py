@@ -10,10 +10,10 @@ from uuid import UUID
 
 from dbt.artifacts.schemas.run import RunExecutionResult
 
-from p1_preparation.prepare import PreparationError, prepare_customers
+from p1_preparation.prepare import PreparationError, prepare_migration
 
 
-class PrepareCustomersTests(unittest.TestCase):
+class PrepareMigrationTests(unittest.TestCase):
     def setUp(self):
         """Provide example settings and replace dbt without reading local credentials."""
         resources = ExitStack()
@@ -29,12 +29,15 @@ class PrepareCustomersTests(unittest.TestCase):
         runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
         self.invoke = runner.return_value.invoke
         self.invoke.return_value.success = True
-        model = SimpleNamespace(
-            resource_type="model", name="stage_customers",
-            relation_name="`example`.`prepared`.`customers_snapshot_00000000000000000000000000000001`",
-        )
+        models = [
+            SimpleNamespace(
+                resource_type="model", name=f"stage_{entity}",
+                relation_name=f"`example`.`prepared`.`{entity}_snapshot_00000000000000000000000000000001`",
+            )
+            for entity in ("customers", "products", "licences")
+        ]
         self.invoke.return_value.result = Mock(
-            spec=RunExecutionResult, results=[SimpleNamespace(node=model)],
+            spec=RunExecutionResult, results=[SimpleNamespace(node=model) for model in models],
         )
 
     # Preview selects the original Databricks table without invoking dbt or needing its token.
@@ -43,15 +46,17 @@ class PrepareCustomersTests(unittest.TestCase):
         del os.environ["DATABRICKS_TOKEN"]
 
         # Act
-        customers_table_to_read = prepare_customers(load=False)
+        tables = prepare_migration(load=False)
 
         # Assert
-        self.assertEqual(customers_table_to_read, "example.raw.customers")
+        self.assertEqual(tables.customers_table, "example.raw.customers")
+        self.assertIsNone(tables.products_table)
+        self.assertIsNone(tables.licences_table)
         self.invoke.assert_not_called()
         self.new_snapshot_id.assert_not_called()
 
-    # The build names a separate snapshot and returns the table dbt actually tested.
-    def test_build_passes_the_customers_table_and_returns_the_tested_snapshot(self):
+    # All three tested snapshots are returned together, including the tables used by relationship checks.
+    def test_build_passes_the_source_and_returns_all_tested_snapshots(self):
         # Arrange
         dbt_project_directory = str(Path(__file__).resolve().parents[1] / "p1_preparation" / "dbt")
         dbt_variables = {
@@ -59,23 +64,28 @@ class PrepareCustomersTests(unittest.TestCase):
             "databricks_customers_schema": "raw",
             "databricks_customers_table_name": "customers",
             "customers_snapshot_table_name": "customers_snapshot_00000000000000000000000000000001",
+            "products_snapshot_table_name": "products_snapshot_00000000000000000000000000000001",
+            "licences_snapshot_table_name": "licences_snapshot_00000000000000000000000000000001",
         }
 
         # Act
-        customers_table_to_read = prepare_customers(load=True)
+        tables = prepare_migration(load=True)
 
         # Assert
         self.invoke.assert_called_once()
         arguments = self.invoke.call_args.args[0]
         self.assertEqual(arguments[:-1], [
             "build", "--project-dir", dbt_project_directory, "--profiles-dir", dbt_project_directory,
-            "--select", "stage_customers", "--vars",
+            "--select", "stage_customers", "stage_products", "stage_licences",
+            "--indirect-selection", "cautious", "--vars",
         ])
         self.assertEqual(json.loads(arguments[-1]), dbt_variables)
         self.assertEqual(
-            customers_table_to_read,
+            tables.customers_table,
             "`example`.`prepared`.`customers_snapshot_00000000000000000000000000000001`",
         )
+        self.assertEqual(tables.products_table, "`example`.`prepared`.`products_snapshot_00000000000000000000000000000001`")
+        self.assertEqual(tables.licences_table, "`example`.`prepared`.`licences_snapshot_00000000000000000000000000000001`")
         self.assertEqual(os.environ["DBT_ENV_SECRET_DATABRICKS_TOKEN"], "example-token")
 
     # Later loads must not rebuild a snapshot that an earlier load is still reading.
@@ -84,8 +94,8 @@ class PrepareCustomersTests(unittest.TestCase):
         self.new_snapshot_id.side_effect = [UUID(int=1), UUID(int=2)]
 
         # Act
-        prepare_customers(load=True)
-        prepare_customers(load=True)
+        prepare_migration(load=True)
+        prepare_migration(load=True)
 
         # Assert
         snapshot_names = []
@@ -104,8 +114,8 @@ class PrepareCustomersTests(unittest.TestCase):
         self.invoke.return_value.success = False
 
         # Act and Assert
-        with self.assertRaisesRegex(PreparationError, "Customer preparation failed"):
-            prepare_customers(load=True)
+        with self.assertRaisesRegex(PreparationError, "Migration preparation failed"):
+            prepare_migration(load=True)
 
     # An incomplete Databricks table name fails before dbt can write anything.
     def test_incomplete_customers_table_name_is_rejected(self):
@@ -114,17 +124,20 @@ class PrepareCustomersTests(unittest.TestCase):
 
         # Act and Assert
         with self.assertRaisesRegex(PreparationError, "catalog.schema.table"):
-            prepare_customers(load=True)
+            prepare_migration(load=True)
         self.invoke.assert_not_called()
 
-    # A successful command without the expected model cannot start a migration.
+    # A successful command missing any one of the snapshots cannot start a migration.
     def test_missing_snapshot_is_reported(self):
         # Arrange
-        self.invoke.return_value.result.results = []
+        results = self.invoke.return_value.result.results
+        for missing in ("stage_customers", "stage_products", "stage_licences"):
+            with self.subTest(missing=missing):
+                self.invoke.return_value.result.results = [entry for entry in results if entry.node.name != missing]
 
-        # Act and Assert
-        with self.assertRaisesRegex(PreparationError, "did not return"):
-            prepare_customers(load=True)
+                # Act and Assert
+                with self.assertRaisesRegex(PreparationError, f"did not return.*{missing}"):
+                    prepare_migration(load=True)
 
     # Missing settings are named without reading or displaying a credential file.
     def test_missing_customers_table_setting_is_reported(self):
@@ -133,7 +146,7 @@ class PrepareCustomersTests(unittest.TestCase):
 
         # Act and Assert
         with self.assertRaisesRegex(PreparationError, "Missing setting: DATABRICKS_CUSTOMERS_TABLE"):
-            prepare_customers(load=False)
+            prepare_migration(load=False)
         self.invoke.assert_not_called()
 
     # Loading requires a token, while preview only selects the original Databricks table.
@@ -143,7 +156,7 @@ class PrepareCustomersTests(unittest.TestCase):
 
         # Act and Assert
         with self.assertRaisesRegex(PreparationError, "Missing setting: DATABRICKS_TOKEN"):
-            prepare_customers(load=True)
+            prepare_migration(load=True)
         self.invoke.assert_not_called()
 
 

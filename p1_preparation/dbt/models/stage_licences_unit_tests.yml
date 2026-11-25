@@ -1,0 +1,53 @@
+version: 2
+
+unit_tests:
+  # Migration preserves all grants and their parent IDs; it does not select only active licences.
+  - name: preserves_historical_future_and_cancelled_licence_terms
+    model: stage_licences  # Act
+    given:  # Arrange
+      - input: source('crm', 'licences_v1')
+        rows:
+          - licence_id: "historical"
+            customer_id: "customer-1"
+            product_id: "product-1"
+            seats: 40
+            starts_on: "2025-01-01"
+            ends_before: "2026-01-01"
+            cancelled_on: null
+          - licence_id: "future"
+            customer_id: "customer-1"
+            product_id: "product-1"
+            seats: 50
+            starts_on: "2027-01-01"
+            ends_before: "2028-01-01"
+            cancelled_on: null
+          - licence_id: "cancelled"
+            customer_id: "customer-2"
+            product_id: "product-2"
+            seats: 10
+            starts_on: "2026-06-01"
+            ends_before: "2027-06-01"
+            cancelled_on: "2026-06-01"
+    expect:  # Assert
+      rows:
+        - licence_id: "historical"
+          customer_id: "customer-1"
+          product_id: "product-1"
+          seats: 40
+          starts_on: "2025-01-01"
+          ends_before: "2026-01-01"
+          cancelled_on: null
+        - licence_id: "future"
+          customer_id: "customer-1"
+          product_id: "product-1"
+          seats: 50
+          starts_on: "2027-01-01"
+          ends_before: "2028-01-01"
+          cancelled_on: null
+        - licence_id: "cancelled"
+          customer_id: "customer-2"
+          product_id: "product-2"
+          seats: 10
+          starts_on: "2026-06-01"
+          ends_before: "2027-06-01"
+          cancelled_on: "2026-06-01"
