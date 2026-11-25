@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from errno import EACCES, EAGAIN
+from fcntl import LOCK_EX, LOCK_NB, LOCK_UN, flock
 from os import fsync
 from pathlib import Path
 from typing import TextIO
@@ -23,11 +25,16 @@ class MigrationReport:
     prepared_accounts: int = 0
     created_accounts: int = 0
     updated_accounts: int = 0
+    previously_verified_accounts: int = 0
+    reconciled_accounts: int = 0
     current_customer_id: str | None = None
 
     @property
     def verified_accounts(self) -> int:
-        return self.created_accounts + self.updated_accounts
+        return (
+            self.created_accounts + self.updated_accounts
+            + self.previously_verified_accounts + self.reconciled_accounts
+        )
 
     def write_event(self, event: str, **details: object) -> None:
         if self.file is not None:
@@ -76,9 +83,34 @@ class MigrationReport:
             accounts_prepared=self.prepared_accounts,
             accounts_created=self.created_accounts,
             accounts_updated=self.updated_accounts,
+            accounts_previously_verified=self.previously_verified_accounts,
+            accounts_reconciled=self.reconciled_accounts,
             accounts_verified=self.verified_accounts,
             unverified_customer_id=self.current_customer_id,
         )
+
+    def record_reconciled_account(self, account_id: object) -> None:
+        """Record matching current fields without claiming another create or update."""
+        self.write_event(
+            "account_reconciled", customer_id=self.current_customer_id, account_id=account_id,
+        )
+        self.reconciled_accounts += 1
+        self.current_customer_id = None
+
+
+@contextmanager
+def lock_report(file: TextIO) -> Iterator[None]:
+    """Keep one local process in charge of this report until its load stops."""
+    try:
+        flock(file.fileno(), LOCK_EX | LOCK_NB)
+    except OSError as error:
+        if error.errno in (EACCES, EAGAIN):
+            raise RuntimeError("This run is already active; wait for its load or resume to stop") from None
+        raise
+    try:
+        yield
+    finally:
+        flock(file.fileno(), LOCK_UN)
 
 
 @contextmanager
@@ -90,7 +122,7 @@ def open_run_report(customers_table_to_read: str, *, load: bool) -> Iterator[Mig
 
     REPORT_DIRECTORY.mkdir(parents=True, exist_ok=True)
     report_path = REPORT_DIRECTORY / f"{uuid4()}.jsonl"
-    with report_path.open("x", encoding="utf-8") as file:
+    with report_path.open("x", encoding="utf-8") as file, lock_report(file):
         report = MigrationReport(file=file)
         report.write_event(
             "run_started",

@@ -9,6 +9,7 @@ from databricks.sql.exc import Error as DatabricksError
 from p2_migration.databricks import connect_to_databricks, fetch_customer
 from p2_migration.mapping import prepare_salesforce_account
 from p2_migration.salesforce import (
+    EXTERNAL_ID_FIELD,
     AccountUnavailableError,
     compare_account,
     connect_to_salesforce,
@@ -27,6 +28,8 @@ class RecordedRun:
     uncertain_customer_id: str | None
     databricks_server_hostname: str | None
     salesforce_my_domain_url: str | None
+    verified_customer_ids: frozenset[str] = frozenset()
+    last_status: str | None = None
 
 
 def read_recorded_run(report_path: Path) -> RecordedRun:
@@ -36,6 +39,9 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
     salesforce_my_domain_url = None
     pending_customer_id = None
     finished = False
+    resumed = False
+    verified_customer_ids = set()
+    last_status = None
 
     with report_path.open(encoding="utf-8") as report:
         for line_number, line in enumerate(report, start=1):
@@ -43,7 +49,9 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 raise ValueError(f"Invalid JSON on report line {line_number}; inspect the report") from None
-            if not isinstance(entry, dict) or finished:
+            if not line.endswith("\n"):
+                raise ValueError("The report ends with an incomplete line; inspect it before continuing")
+            if not isinstance(entry, dict):
                 raise ValueError(f"Unexpected record on report line {line_number}")
             event = entry.get("event")
             if line_number == 1:
@@ -60,18 +68,33 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                         raise ValueError("Recorded destination addresses must be text")
                 continue
 
-            if event in ("account_load_started", "account_verified"):
+            if event == "resume_started":
+                if last_status == "complete":
+                    raise ValueError("A completed run must not contain a resume")
+                finished = False
+                resumed = True
+                last_status = None
+                continue
+            if finished:
+                raise ValueError(f"Unexpected record on report line {line_number}")
+
+            if event in ("account_load_started", "account_verified", "account_reconciled"):
                 customer_id = entry.get("customer_id")
                 if not isinstance(customer_id, str) or not customer_id.strip():
                     raise ValueError(f"Missing customer ID on report line {line_number}")
+                if customer_id in verified_customer_ids:
+                    raise ValueError("The report repeats an already verified customer")
                 if event == "account_load_started":
                     if pending_customer_id is not None:
                         raise ValueError("The report contains overlapping account attempts")
                     pending_customer_id = customer_id
                 else:
+                    if event == "account_reconciled" and not resumed:
+                        raise ValueError("Reconciled progress requires a resume entry")
                     if customer_id != pending_customer_id:
                         raise ValueError("Verification has no matching attempt; older or inconsistent reports need manual inspection")
                     pending_customer_id = None
+                    verified_customer_ids.add(customer_id)
             elif event == "customer_rejected":
                 if pending_customer_id is not None:
                     raise ValueError("The report rejects a customer during an unfinished account attempt")
@@ -80,6 +103,11 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                 if unverified is not None and unverified != pending_customer_id:
                     raise ValueError("The summary has no matching attempt; inspect the report manually")
                 finished = True
+                last_status = entry.get("status")
+                if last_status not in (None, "complete", "incomplete", "failed"):
+                    raise ValueError("The report contains an unknown run outcome")
+                if last_status == "complete" and pending_customer_id is not None:
+                    raise ValueError("The report claims completion with an unresolved attempt")
             else:
                 raise ValueError(f"Unknown or misplaced event on report line {line_number}")
 
@@ -87,6 +115,7 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
         raise ValueError("The report is empty")
     return RecordedRun(
         customers_table, pending_customer_id, databricks_server_hostname, salesforce_my_domain_url,
+        frozenset(verified_customer_ids), last_status,
     )
 
 
@@ -135,24 +164,38 @@ def compare_uncertain_account(recorded_run: RecordedRun) -> None:
     print(f"Salesforce domain: {recorded_run.salesforce_my_domain_url}")
     print("Connection addresses match the run report.")
 
-    with connect_to_databricks() as connection:
-        customer = fetch_customer(connection, recorded_run.customers_table, customer_id)
+    with connect_to_databricks() as connection, requests.Session() as session:
+        expected = prepare_snapshot_account(connection, recorded_run.customers_table, customer_id)
+        instance_url = connect_to_salesforce(session)
+        print(f"Salesforce instance: {instance_url}")
+        read_matching_account(session, instance_url, expected)
+    print("Result: all 5 mapped fields currently match the saved snapshot.")
+    print("No records were changed. This does not prove which request saved the account.")
+
+
+def prepare_snapshot_account(
+    connection, customers_table: str, customer_id: str,
+) -> dict[str, object]:
+    """Prepare one valid snapshot customer using the normal migration rules."""
+    customer = fetch_customer(connection, customers_table, customer_id)
     errors = validate_customer(customer)
     if errors:
         raise ValueError("Snapshot customer is invalid: " + "; ".join(errors))
-    expected = prepare_salesforce_account(customer)
+    return prepare_salesforce_account(customer)
 
-    with requests.Session() as session:
-        instance_url = connect_to_salesforce(session)
-        print(f"Salesforce instance: {instance_url}")
-        try:
-            actual = read_account(session, instance_url, customer_id)
-        except AccountUnavailableError:
-            raise ReconciliationError(
-                "Account unavailable (HTTP 404). It may be missing or inaccessible; no write was attempted."
-            ) from None
+
+def read_matching_account(
+    session: requests.Session, instance_url: str, expected: dict[str, object],
+) -> dict[str, object]:
+    """Return the Account only when its mapped fields match the snapshot."""
+    customer_id = str(expected[EXTERNAL_ID_FIELD])
+    try:
+        actual = read_account(session, instance_url, customer_id)
+    except AccountUnavailableError:
+        raise ReconciliationError(
+            "Account unavailable (HTTP 404). It may be missing or inaccessible; no write was attempted."
+        ) from None
     differences = compare_account(expected, actual)
     if differences:
         raise ReconciliationError("Account differs from the snapshot: " + ", ".join(differences))
-    print("Result: all 5 mapped fields currently match the saved snapshot.")
-    print("No records were changed. This does not prove which request saved the account.")
+    return actual
