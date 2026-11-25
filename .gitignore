@@ -7,6 +7,9 @@ __pycache__/
 .env.*
 !.env.example
 
+# Local migration reports contain record IDs and validation results.
+reports/
+
 # Generated dbt files.
 p1_preparation/dbt/target/
 p1_preparation/dbt/logs/
