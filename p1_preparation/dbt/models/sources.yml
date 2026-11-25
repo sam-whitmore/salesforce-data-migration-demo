@@ -2,9 +2,13 @@ version: 2
 
 sources:
   - name: crm
-    description: Fictional customer data uploaded from p0_data/seed/customers_v1.csv to Databricks.
+    description: Fictional customer, product and licence CSVs uploaded from p0_data/seed/ to Databricks.
     database: "{{ var('databricks_customers_catalog', 'workspace') }}"
     schema: "{{ var('databricks_customers_schema', 'default') }}"
     tables:
       - name: customers_v1
         identifier: "{{ var('databricks_customers_table_name', 'customers_v1') }}"
+      - name: products_v1
+        description: Products uploaded from p0_data/seed/products_v1.csv to the same catalog and schema as customers.
+      - name: licences_v1
+        description: Licence terms uploaded from p0_data/seed/licences_v1.csv to the same catalog and schema as customers.

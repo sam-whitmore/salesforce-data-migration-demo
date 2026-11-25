@@ -41,7 +41,7 @@ class ResumeTests(unittest.TestCase):
             "SALESFORCE_MY_DOMAIN_URL": "https://example.my.salesforce.com",
             "DATABRICKS_CUSTOMERS_TABLE": "test.raw.newer_source",
         }, clear=True))
-        self.prepare = resources.enter_context(patch("main.prepare_customers"))
+        self.prepare = resources.enter_context(patch("main.prepare_migration"))
         self.database = object()
         self.connect = resources.enter_context(patch(
             "p2_migration.migrate.connect_to_databricks", return_value=nullcontext(self.database),

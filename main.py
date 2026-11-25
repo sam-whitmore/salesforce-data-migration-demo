@@ -3,7 +3,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from p1_preparation.prepare import PreparationError, prepare_customers
+from p1_preparation.prepare import PreparationError, prepare_migration
 from p2_migration.migrate import MigrationError, migrate_customers
 from p2_migration.reconcile import ReconciliationError, reconcile_customers
 from p2_migration.resume import resume_customers
@@ -20,8 +20,8 @@ def main(argv: list[str] | None = None) -> None:
         resume_customers(arguments.resume)
         return
 
-    customers_table_to_read = prepare_customers(load=arguments.load)
-    migrate_customers(customers_table_to_read, load=arguments.load)
+    tables = prepare_migration(load=arguments.load)
+    migrate_customers(tables, load=arguments.load)
 
 
 def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
@@ -29,7 +29,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--load", action="store_true",
-        help="Build and test a customer snapshot, then save and verify Salesforce accounts",
+        help="Build and test all three snapshots, then save and verify customer Accounts",
     )
     mode.add_argument(
         "--reconcile", type=Path, metavar="REPORT",

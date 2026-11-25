@@ -35,4 +35,6 @@ jobs:
           DBT_ENV_SECRET_DATABRICKS_TOKEN: unused
         run: >-
           dbt parse --project-dir p1_preparation/dbt --profiles-dir p1_preparation/dbt
-          --no-partial-parse --vars '{"customers_snapshot_table_name": "customers_snapshot_ci"}'
+          --no-partial-parse --vars '{"customers_snapshot_table_name": "customers_snapshot_ci",
+          "products_snapshot_table_name": "products_snapshot_ci",
+          "licences_snapshot_table_name": "licences_snapshot_ci"}'

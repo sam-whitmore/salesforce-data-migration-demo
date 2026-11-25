@@ -1,0 +1,44 @@
+version: 2
+
+unit_tests:
+  # Clean labels while retaining the exact ID and inactive products.
+  - name: cleans_product_labels_without_changing_identity_or_availability
+    model: stage_products  # Act
+    given:  # Arrange
+      - input: source('crm', 'products_v1')
+        rows:
+          - product_id: " product-1 "
+            product_code: "  KORU-FLEET  "
+            product_name: "  Koru Fleet Workspace  "
+            is_active: true
+          - product_id: "product-2"
+            product_code: "KORU-CLASSIC"
+            product_name: "Koru Classic"
+            is_active: false
+    expect:  # Assert
+      rows:
+        - product_id: " product-1 "
+          product_code: "KORU-FLEET"
+          product_name: "Koru Fleet Workspace"
+          is_active: true
+        - product_id: "product-2"
+          product_code: "KORU-CLASSIC"
+          product_name: "Koru Classic"
+          is_active: false
+
+  # Empty labels become null so the required-field tests can reject them.
+  - name: makes_blank_product_labels_null
+    model: stage_products  # Act
+    given:  # Arrange
+      - input: source('crm', 'products_v1')
+        rows:
+          - product_id: "product-1"
+            product_code: "   "
+            product_name: ""
+            is_active: null
+    expect:  # Assert
+      rows:
+        - product_id: "product-1"
+          product_code: null
+          product_name: null
+          is_active: null

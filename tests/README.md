@@ -15,7 +15,7 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 | [test_validation.py](test_validation.py) | Which customer values are acceptable, and can we report problems without silently changing the input? |
 | [test_mapping.py](test_mapping.py) | Do the intended fields reach the Account payload, with stable customer IDs and an unchanged source record? |
 | [test_databricks.py](test_databricks.py) | Are table names passed correctly, count results kept in order, and batches fetched only as needed? |
-| [test_preparation.py](test_preparation.py) | Does Python give dbt the right source and a fresh snapshot name, then handle its result correctly? |
+| [test_preparation.py](test_preparation.py) | Does Python select all three models, give them fresh snapshot names, and return a complete set of tested tables? |
 | [test_retries.py](test_retries.py) | Which requests may repeat, how long should they wait, and when must retries stop? |
 | [test_salesforce.py](test_salesforce.py) | Are requests authenticated and addressed correctly, and is each successful save followed by verification without unsafe replay? |
 | [test_main.py](test_main.py) | Do the phases work together, preserve preview behaviour, and report complete, incomplete and failed loads accurately? |
@@ -41,6 +41,6 @@ An empty source, all customers rejected, and a mixture of accepted and rejected 
 
 Python tests do not execute SQL or call Salesforce. They cannot establish real permissions, database isolation, network behaviour or large-scale performance. The Databricks count test checks parameter binding and returned values, not the SQL engine's calculation.
 
-The three [dbt unit tests](../p1_preparation/dbt/models/stage_customers_unit_tests.yml) execute the SQL transformations against controlled examples on Databricks. The seven dbt data checks inspect the resulting snapshot. Both require a live warehouse; GitHub's dbt parse step checks configuration only.
+The three [customer SQL unit tests](../p1_preparation/dbt/models/stage_customers_unit_tests.yml) execute transformations against controlled examples on Databricks. Seven data checks inspect the customer snapshot. The [product](../p1_preparation/dbt/models/stage_products_unit_tests.yml) and [licence](../p1_preparation/dbt/models/stage_licences_unit_tests.yml) definitions add three unit tests and 17 data checks, including parent relationships and seat/date rules. `--load` selects all of them before any Salesforce access. All six unit tests and 24 data checks passed in a live Databricks run. GitHub's dbt parse step checks configuration only.
 
 When adding a test, identify the incorrect behaviour it should catch. Keep a separate test when the rule or observable outcome differs. Use another subtest case when only the example input changes.
