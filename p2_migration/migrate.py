@@ -78,9 +78,9 @@ def load_accounts(
     accounts: Iterable[Mapping[str, object]],
     report: MigrationReport,
 ) -> None:
-    """Record each account immediately after its save and verification succeed."""
+    """Record each attempt before saving, then record successful verification."""
     for account in accounts:
-        report.current_customer_id = str(account[EXTERNAL_ID_FIELD])
+        report.record_load_started(str(account[EXTERNAL_ID_FIELD]))
         print(f"  Loading customer {account[EXTERNAL_ID_FIELD]}", flush=True)
         outcome, received_account = save_and_verify_account(session, instance_url, account)
         report.record_verified_account(received_account["Id"], outcome)

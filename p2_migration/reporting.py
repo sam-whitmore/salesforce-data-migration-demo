@@ -3,6 +3,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from os import fsync
 from pathlib import Path
 from typing import TextIO
 from uuid import uuid4
@@ -36,6 +37,12 @@ class MigrationReport:
             }
             self.file.write(json.dumps(entry, ensure_ascii=False) + "\n")
             self.file.flush()
+            fsync(self.file.fileno())
+
+    def record_load_started(self, customer_id: str) -> None:
+        """Persist the intent before saving; this does not prove Salesforce received it."""
+        self.current_customer_id = customer_id
+        self.write_event("account_load_started", customer_id=customer_id)
 
     def reject_customer(self, customer_id: object, errors: list[str]) -> None:
         self.rejected_customers += 1

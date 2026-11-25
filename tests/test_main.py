@@ -146,8 +146,8 @@ class MainTests(unittest.TestCase):
         self.assertEqual(summary["customers_retrieved"], 0)
         self.assertEqual(summary["accounts_verified"], 0)
 
-    # Progress is already readable on disk when the next customer's load starts.
-    def test_verified_progress_is_saved_before_the_next_account(self):
+    # Before another save begins, the report already contains prior progress and the new attempt.
+    def test_progress_and_write_intent_are_saved_before_the_next_account(self):
         # Arrange
         self.database.customers = iter([customer_row("first"), customer_row("second")])
         events_during_load = []
@@ -163,8 +163,15 @@ class MainTests(unittest.TestCase):
         main(["--load"])
 
         # Assert
-        self.assertEqual(events_during_load[-1]["event"], "account_verified")
-        self.assertEqual(events_during_load[-1]["customer_id"], "first")
+        self.assertEqual(
+            [(event["event"], event.get("customer_id")) for event in events_during_load],
+            [
+                ("run_started", None),
+                ("account_load_started", "first"),
+                ("account_verified", "first"),
+                ("account_load_started", "second"),
+            ],
+        )
         self.assertNotIn("run_finished", [event["event"] for event in events_during_load])
 
     # Valid records still load, but a rejected record makes the overall load incomplete.
@@ -348,6 +355,22 @@ class MainTests(unittest.TestCase):
         self.connect_to_databricks.assert_not_called()
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
+
+    # If the attempt cannot be synced to disk, its Salesforce save must not begin.
+    def test_failed_attempt_sync_prevents_the_salesforce_save(self):
+        # Arrange
+        self.database.customers = iter([customer_row("first")])
+
+        # Act
+        with (
+            patch("p2_migration.reporting.fsync", side_effect=[None, OSError("disk sync failed"), None]),
+            self.assertRaisesRegex(MigrationError, "Could not save the migration report"),
+        ):
+            main(["--load"])
+
+        # Assert
+        self.save_and_verify.assert_not_called()
+        self.assertEqual(self.read_report()[-1]["status"], "failed")
 
     # Ctrl+C records partial progress but does not pretend the current write was undone.
     def test_keyboard_interrupt_records_an_unverified_customer(self):

@@ -112,7 +112,9 @@ Accounts verified: 20
 Run outcome: complete
 ```
 
-Console headings separate preparation, migration and the summary. Each load saves a report in `reports/` and prints its path at the start of migration and after the outcome. The `.jsonl` file contains one JSON record per line: the start, rejected customer IDs and reasons, verified accounts, and a final summary. Records are written as processing progresses, without accumulating them in memory. Git ignores these local reports.
+Console headings separate preparation, migration and the summary. Each load saves a report in `reports/` and prints its path. The `.jsonl` file contains one JSON record per line: the run start, rejected customers and reasons, account load attempts, verified accounts, and a final summary. Git ignores these local reports.
+
+Before each Salesforce save, an `account_load_started` entry is written, flushed and synced to disk. After readback confirms the fields, an `account_verified` entry is saved the same way. If the first entry has no matching verification, the account needs inspection: the save may or may not have reached Salesforce. A report-storage error stops processing before another save.
 
 | Load outcome | Meaning | Exit status |
 | --- | --- | --- |
@@ -120,7 +122,7 @@ Console headings separate preparation, migration and the summary. Each load save
 | `incomplete` | Processing finished, but some customers were rejected. Valid customers were still loaded. | 1 |
 | `failed` | An error or interruption stopped processing. Earlier writes may remain in Salesforce. | Nonzero |
 
-Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A stopped load records its progress where possible; an unverified customer may already have been saved. A report without a final summary does not establish success. Recovery still means rerunning with the same source IDs, not resuming from a checkpoint.
+Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A report without a final summary does not establish success. Inspect uncertain saves before rerunning with the same source IDs; automatic resume is not implemented. Older reports without load-attempt entries cannot identify a save interrupted before verification.
 
 Each load creates a new Delta table containing the prepared rows. dbt's data checks, Python's ID check and batch extraction all read that table. Later source changes or subsequent loads do not replace those rows. The loader uses Salesforce API v68.0 and updates only the mapped fields.
 
