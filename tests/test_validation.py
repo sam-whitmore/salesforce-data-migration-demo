@@ -36,73 +36,58 @@ class ValidateCustomerTests(unittest.TestCase):
         # Assert
         self.assertEqual(errors, ["customer_id must be non-empty text"])
 
-    # Spaces alone do not count as a name, and validation leaves them unchanged.
-    def test_blank_name_is_reported(self):
+    # Required values must be non-empty text; validation reports rather than repairs them.
+    def test_required_fields_reject_invalid_text_without_changing_it(self):
         # Arrange
-        self.customer["legal_name"] = "   "
+        invalid_fields = (
+            ("customer_id", 123),
+            ("legal_name", "   "),
+            ("billing_city", None),
+            ("billing_postal_code", 110),
+            ("billing_country_code", ""),
+        )
 
-        # Act
-        errors = validate_customer(self.customer)
+        for field, value in invalid_fields:
+            with self.subTest(field=field, value=value):
+                customer = {**self.customer, field: value}
+                original_customer = customer.copy()
 
-        # Assert
-        self.assertEqual(errors, ["legal_name must be non-empty text"])
-        self.assertEqual(self.customer["legal_name"], "   ")
+                # Act
+                errors = validate_customer(customer)
 
-    # A null city is reported as missing text.
-    def test_null_city_is_reported(self):
+                # Assert
+                self.assertEqual(errors, [f"{field} must be non-empty text"])
+                self.assertEqual(customer, original_customer)
+
+    # NZ postcodes require exactly four ASCII digits, not merely four characters.
+    def test_nz_postcodes_require_exactly_four_ascii_digits(self):
         # Arrange
-        self.customer["billing_city"] = None
+        invalid_postcodes = ("110", "01100", "01A0", "٠١١٠", "0110 ")
 
-        # Act
-        errors = validate_customer(self.customer)
+        for postcode in invalid_postcodes:
+            with self.subTest(postcode=postcode):
+                customer = {**self.customer, "billing_postal_code": postcode}
 
-        # Assert
-        self.assertEqual(errors, ["billing_city must be non-empty text"])
+                # Act
+                errors = validate_customer(customer)
 
-    # A numeric postcode is rejected rather than converted to text.
-    def test_numeric_postcode_is_rejected_without_converting_it(self):
+                # Assert
+                self.assertEqual(errors, ["NZ billing_postal_code must contain exactly four digits"])
+
+    # Country codes require both the right length and uppercase ASCII letters.
+    def test_country_codes_require_exactly_two_uppercase_letters(self):
         # Arrange
-        self.customer["billing_postal_code"] = 110
+        invalid_codes = ("nz", "N", "NZZ", "N1", "NZ ", "ÑZ")
 
-        # Act
-        errors = validate_customer(self.customer)
+        for country_code in invalid_codes:
+            with self.subTest(country_code=country_code):
+                customer = {**self.customer, "billing_country_code": country_code}
 
-        # Assert
-        self.assertEqual(errors, ["billing_postal_code must be non-empty text"])
-        self.assertEqual(self.customer["billing_postal_code"], 110)
+                # Act
+                errors = validate_customer(customer)
 
-    # A three-digit NZ postcode is too short.
-    def test_short_nz_postcode_is_reported(self):
-        # Arrange
-        self.customer["billing_postal_code"] = "110"
-
-        # Act
-        errors = validate_customer(self.customer)
-
-        # Assert
-        self.assertEqual(errors, ["NZ billing_postal_code must contain exactly four digits"])
-
-    # A four-character NZ postcode must contain only digits.
-    def test_nz_postcode_cannot_contain_letters(self):
-        # Arrange
-        self.customer["billing_postal_code"] = "01A0"
-
-        # Act
-        errors = validate_customer(self.customer)
-
-        # Assert
-        self.assertEqual(errors, ["NZ billing_postal_code must contain exactly four digits"])
-
-    # Country codes must use uppercase letters.
-    def test_lowercase_country_code_is_reported(self):
-        # Arrange
-        self.customer["billing_country_code"] = "nz"
-
-        # Act
-        errors = validate_customer(self.customer)
-
-        # Assert
-        self.assertEqual(errors, ["billing_country_code must contain two uppercase letters"])
+                # Assert
+                self.assertEqual(errors, ["billing_country_code must contain two uppercase letters"])
 
     # A UK postcode is not subject to the NZ four-digit rule.
     def test_nz_postcode_rule_does_not_apply_to_other_countries(self):

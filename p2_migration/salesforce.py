@@ -4,6 +4,8 @@ from urllib.parse import quote, urlsplit
 
 import requests
 
+from p2_migration.retries import request_with_retries
+
 API_VERSION = "68.0"
 EXTERNAL_ID_FIELD = "Source_Customer_ID__c"
 
@@ -33,15 +35,14 @@ def connect_to_salesforce(session: requests.Session) -> str:
     if missing:
         raise ValueError("Missing Salesforce settings: " + ", ".join(missing))
     domain = _salesforce_url(os.environ["SALESFORCE_MY_DOMAIN_URL"])
-    response = session.post(
+    response = request_with_retries(
+        session.post,
         f"{domain}/services/oauth2/token",
         data={
             "grant_type": "client_credentials",
             "client_id": os.environ["SALESFORCE_CLIENT_ID"],
             "client_secret": os.environ["SALESFORCE_CLIENT_SECRET"],
         },
-        timeout=30,
-        allow_redirects=False,
     )
     if response.status_code != 200:
         raise RuntimeError(f"Salesforce authentication failed (HTTP {response.status_code})")
@@ -71,11 +72,10 @@ def save_account(
     # The external ID belongs in the URL, not in the fields being updated.
     fields = dict(account)
     del fields[EXTERNAL_ID_FIELD]
-    response = session.patch(
+    response = request_with_retries(
+        session.patch,
         _account_url(instance_url, customer_id),
         json=fields,
-        timeout=30,
-        allow_redirects=False,
     )
     if response.status_code == 201:
         return "created"
@@ -88,10 +88,10 @@ def read_account(
     session: requests.Session, instance_url: str, customer_id: str
 ) -> dict[str, object]:
     """Read an Account using the same source ID used when saving it."""
-    response = session.get(
+    response = request_with_retries(
+        session.get,
         _account_url(instance_url, customer_id),
-        timeout=30,
-        allow_redirects=False,
+        read_only=True,
     )
     if response.status_code != 200:
         raise RuntimeError(f"Salesforce account read failed (HTTP {response.status_code})")

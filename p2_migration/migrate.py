@@ -43,7 +43,7 @@ def migrate_customers(customers_table_to_read: str, *, load: bool) -> None:
     except requests.RequestException:
         raise MigrationError(
             "A Salesforce request failed. Earlier writes may have completed; "
-            "rerun with the same source IDs to save and verify them again."
+            "inspect the run report and Salesforce account before rerunning."
         ) from None
     except OSError:
         raise MigrationError(
