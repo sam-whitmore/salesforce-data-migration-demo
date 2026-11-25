@@ -34,11 +34,11 @@ def prepare_customers(*, load: bool) -> str:
     os.environ["DBT_ENV_SECRET_DATABRICKS_TOKEN"] = databricks_token
     dbt_project_directory = str(Path(__file__).resolve().parent / "dbt")
     dbt_build = dbtRunner().invoke([
-        "build",
-        "--project-dir", dbt_project_directory,
-        "--profiles-dir", dbt_project_directory,
-        "--select", "stage_customers",
-        "--vars", json.dumps({
+        "build", # Build the selected model and run its associated tests
+        "--project-dir", dbt_project_directory, # Where the dbt project lives
+        "--profiles-dir", dbt_project_directory, # Where its connection configuration lives
+        "--select", "stage_customers", # Which model to build
+        "--vars", json.dumps({ # Variables supplied to this run
             "databricks_customers_catalog": databricks_customers_catalog,
             "databricks_customers_schema": databricks_customers_schema,
             "databricks_customers_table_name": databricks_customers_table_name,
@@ -53,5 +53,5 @@ def prepare_customers(*, load: bool) -> str:
     for entry in dbt_build.result.results:
         if entry.node.resource_type == "model" and entry.node.name == "stage_customers":
             if entry.node.relation_name:
-                return entry.node.relation_name
+                return entry.node.relation_name # `relation_name` is dbt's term for the full database name of the table or view. This example ought to return `workspace`.`migration`.`stage_customers`
     raise PreparationError("dbt did not return the prepared customer view")
