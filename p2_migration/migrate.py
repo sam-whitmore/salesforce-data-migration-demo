@@ -9,6 +9,7 @@ from p2_migration.databricks import (
     count_customers,
     fetch_customer_batches,
 )
+from p2_migration.licences import compare_snapshot_licence, process_licence_batches
 from p2_migration.mapping import prepare_salesforce_account
 from p2_migration.products import compare_snapshot_product, process_product_batches
 from p2_migration.reconcile import prepare_snapshot_account, read_matching_account
@@ -30,12 +31,13 @@ def migrate_records(tables: MigrationTables, *, load: bool) -> None:
     phase = "Migration" if load else "Preview"
     print(f"\n2. {phase}\n" + "=" * 60, flush=True)
     if load:
-        print("Load customers, then products; read each record back to verify its mapped fields.", flush=True)
+        print("Load customers, products and licences; read each record back to verify its mapped fields.", flush=True)
     try:
         with open_run_report(
             tables.customers_table, load=load,
             products_table=tables.products_table, licences_table=tables.licences_table,
             load_products=load and tables.products_table is not None,
+            load_licences=load and tables.licences_table is not None,
         ) as report:
             process_migration_batches(tables, load=load, report=report)
     except DatabricksError:
@@ -61,8 +63,20 @@ def process_migration_batches(
     tables: MigrationTables, *, load: bool, report: MigrationReport,
     verified_customer_ids: frozenset[str] = frozenset(),
     verified_product_ids: frozenset[str] = frozenset(),
+    verified_licence_ids: frozenset[str] = frozenset(),
 ) -> None:
-    """Resolve an uncertain product before any further writes, then run both stages."""
+    """Resolve uncertainty before further writes, then load parents before licences."""
+    if load and tables.licences_table is not None and tables.products_table is None:
+        raise ValueError("Licence loading requires the product stage")
+    if report.current_licence_id is not None:
+        if tables.licences_table is None:
+            raise ValueError("Licence recovery requires its saved snapshot")
+        licence_id = report.current_licence_id
+        received = compare_snapshot_licence(tables.licences_table, licence_id)
+        report.record_reconciled_licence(received["Id"])
+        verified_licence_ids = verified_licence_ids | {licence_id}
+        print(f"  Licence {licence_id}: reconciled, save not repeated", flush=True)
+
     if report.current_product_id is not None:
         if tables.products_table is None:
             raise ValueError("Product recovery requires its saved snapshot")
@@ -79,7 +93,16 @@ def process_migration_batches(
     )
     if load and tables.products_table is not None:
         process_product_batches(tables.products_table, report, verified_product_ids)
-    finish_migration(report, load=load, products_included=load and tables.products_table is not None)
+    if load and tables.licences_table is not None:
+        if report.rejected_customers or report.rejected_products:
+            print("\nLicences not loaded: correct the rejected customer or product records first.", flush=True)
+        else:
+            process_licence_batches(tables.licences_table, report, verified_licence_ids)
+    finish_migration(
+        report, load=load,
+        products_included=load and tables.products_table is not None,
+        licences_included=load and tables.licences_table is not None,
+    )
 
 
 def prepare_accounts(
@@ -161,7 +184,9 @@ def check_recorded_customers(connection, customers_table: str, customer_ids: set
         raise ValueError("Previously verified customers are missing from the saved snapshot; inspect it before resuming")
 
 
-def finish_migration(report: MigrationReport, *, load: bool, products_included: bool) -> None:
+def finish_migration(
+    report: MigrationReport, *, load: bool, products_included: bool, licences_included: bool = False,
+) -> None:
     """Summarise the full run only after all included stages finish."""
     print("\nSummary\n" + "-" * 60)
     print(f"Total customers retrieved: {report.total_customers}")
@@ -184,7 +209,16 @@ def finish_migration(report: MigrationReport, *, load: bool, products_included: 
             print(f"Products previously verified: {report.previously_verified_products}")
             print(f"Products reconciled without saving: {report.reconciled_products}")
         print(f"Products verified: {report.verified_products}")
-    rejected = report.rejected_customers + report.rejected_products
+    if licences_included:
+        print(f"Licences retrieved: {report.total_licences}")
+        print(f"Licences rejected: {report.rejected_licences}")
+        print(f"Licences created: {report.created_licences}")
+        print(f"Licences updated: {report.updated_licences}")
+        if report.previously_verified_licences or report.reconciled_licences:
+            print(f"Licences previously verified: {report.previously_verified_licences}")
+            print(f"Licences reconciled without saving: {report.reconciled_licences}")
+        print(f"Licences verified: {report.verified_licences}")
+    rejected = report.rejected_customers + report.rejected_products + report.rejected_licences
     report.status = "incomplete" if rejected else "complete"
     if load and rejected:
         raise MigrationError(

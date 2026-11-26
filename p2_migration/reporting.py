@@ -38,11 +38,27 @@ class MigrationReport:
     reconciled_products: int = 0
     current_product_id: str | None = None
 
+    total_licences: int = 0
+    rejected_licences: int = 0
+    prepared_licences: int = 0
+    created_licences: int = 0
+    updated_licences: int = 0
+    previously_verified_licences: int = 0
+    reconciled_licences: int = 0
+    current_licence_id: str | None = None
+
     @property
     def verified_products(self) -> int:
         return (
             self.created_products + self.updated_products
             + self.previously_verified_products + self.reconciled_products
+        )
+
+    @property
+    def verified_licences(self) -> int:
+        return (
+            self.created_licences + self.updated_licences
+            + self.previously_verified_licences + self.reconciled_licences
         )
 
     @property
@@ -112,6 +128,15 @@ class MigrationReport:
             products_reconciled=self.reconciled_products,
             products_verified=self.verified_products,
             unverified_product_id=self.current_product_id,
+            licences_retrieved=self.total_licences,
+            licences_rejected=self.rejected_licences,
+            licences_prepared=self.prepared_licences,
+            licences_created=self.created_licences,
+            licences_updated=self.updated_licences,
+            licences_previously_verified=self.previously_verified_licences,
+            licences_reconciled=self.reconciled_licences,
+            licences_verified=self.verified_licences,
+            unverified_licence_id=self.current_licence_id,
         )
 
     def record_reconciled_account(self, account_id: object) -> None:
@@ -152,6 +177,36 @@ class MigrationReport:
         self.reconciled_products += 1
         self.current_product_id = None
 
+    def record_licence_load_started(self, licence_id: str) -> None:
+        """Persist the licence's identity before its external write."""
+        self.current_licence_id = licence_id
+        self.write_event("licence_load_started", licence_id=licence_id)
+
+    def reject_licence(self, licence_id: object, errors: list[str]) -> None:
+        self.rejected_licences += 1
+        self.write_event(
+            "licence_rejected",
+            licence_id=None if licence_id is None else str(licence_id), reasons=errors,
+        )
+
+    def record_verified_licence(self, salesforce_id: object, outcome: str) -> None:
+        self.write_event(
+            "licence_verified", licence_id=self.current_licence_id,
+            salesforce_id=salesforce_id, outcome=outcome,
+        )
+        if outcome == "created":
+            self.created_licences += 1
+        else:
+            self.updated_licences += 1
+        self.current_licence_id = None
+
+    def record_reconciled_licence(self, salesforce_id: object) -> None:
+        self.write_event(
+            "licence_reconciled", licence_id=self.current_licence_id, salesforce_id=salesforce_id,
+        )
+        self.reconciled_licences += 1
+        self.current_licence_id = None
+
 
 @contextmanager
 def lock_report(file: TextIO) -> Iterator[None]:
@@ -172,7 +227,7 @@ def lock_report(file: TextIO) -> Iterator[None]:
 def open_run_report(
     customers_table_to_read: str, *, load: bool,
     products_table: str | None = None, licences_table: str | None = None,
-    load_products: bool = False,
+    load_products: bool = False, load_licences: bool = False,
 ) -> Iterator[MigrationReport]:
     """Save load outcomes locally; previews only keep counters in memory."""
     if not load:
@@ -189,6 +244,7 @@ def open_run_report(
             products_table=products_table,
             load_products=load_products,
             licences_table=licences_table,
+            load_licences=load_licences,
             databricks_server_hostname=os.environ.get("DATABRICKS_SERVER_HOSTNAME"),
             salesforce_my_domain_url=os.environ.get("SALESFORCE_MY_DOMAIN_URL"),
         )
@@ -203,4 +259,6 @@ def open_run_report(
                 print(f"Customer needing verification: {report.current_customer_id}")
             if report.current_product_id is not None:
                 print(f"Product needing verification: {report.current_product_id}")
+            if report.current_licence_id is not None:
+                print(f"Licence needing verification: {report.current_licence_id}")
             print(f"Report saved: {report_path}")

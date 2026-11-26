@@ -131,7 +131,7 @@ class MigrationModelTests(unittest.TestCase):
         self.assertRegex(self.output.getvalue(), r"\| Databricks field\s+\| Type\s+\| Salesforce field\s+\| Type\s+\|")
         self.assertRegex(self.output.getvalue(), r"\| billing_postal_code\s+\| string\s+\| BillingPostalCode\s+\| string\s+\|")
         self.assertIn("Products → Product2 (load in this run)", self.output.getvalue())
-        self.assertIn("Licences → Licence__c (check only; loading planned)", self.output.getvalue())
+        self.assertIn("Licences → Licence__c (load in this run)", self.output.getvalue())
 
     # Object permissions and field visibility/editability can fail independently.
     def test_reports_missing_fields_and_denied_permissions_together(self):

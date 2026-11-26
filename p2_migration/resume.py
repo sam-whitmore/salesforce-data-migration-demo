@@ -27,16 +27,21 @@ def resume_migration(report_path: Path) -> None:
                 current_customer_id=recorded_run.uncertain_customer_id,
                 previously_verified_products=len(recorded_run.verified_product_ids),
                 current_product_id=recorded_run.uncertain_product_id,
+                previously_verified_licences=len(recorded_run.verified_licence_ids),
+                current_licence_id=recorded_run.uncertain_licence_id,
             )
             report.write_event("resume_started")
             print(f"Run report: {report_path}", flush=True)
             print(f"Saved snapshot: {recorded_run.customers_table}")
             try:
-                tables = MigrationTables(recorded_run.customers_table, recorded_run.products_table)
+                tables = MigrationTables(
+                    recorded_run.customers_table, recorded_run.products_table, recorded_run.licences_table,
+                )
                 process_migration_batches(
                     tables, load=True, report=report,
                     verified_customer_ids=recorded_run.verified_customer_ids,
                     verified_product_ids=recorded_run.verified_product_ids,
+                    verified_licence_ids=recorded_run.verified_licence_ids,
                 )
             finally:
                 report.write_summary()

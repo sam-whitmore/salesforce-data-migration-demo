@@ -156,3 +156,70 @@ def fetch_product(connection, products_table_to_read: str, product_id: str) -> d
     if len(products) != 1:
         raise ValueError("The saved snapshot must contain exactly one matching product")
     return products[0].asDict()
+
+
+def count_licences(connection, licences_table_to_read: str) -> tuple[int, int]:
+    query = """
+        SELECT
+            COUNT(*) AS total_licences,
+            COUNT(DISTINCT licence_id) AS unique_licence_ids
+        FROM IDENTIFIER(:licences_table_to_read)
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            query,
+            parameters={"licences_table_to_read": licences_table_to_read},
+        )
+        total_licences, unique_licence_ids = cursor.fetchone()
+
+    return total_licences, unique_licence_ids
+
+
+def fetch_licence_batches(
+    connection, licences_table_to_read: str, batch_size: int
+) -> Iterator[list[Row]]:
+    """Yield licence records in batches without collecting the full result."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+
+    query = """
+        SELECT
+            licence_id,
+            customer_id,
+            product_id,
+            seats,
+            starts_on,
+            ends_before,
+            cancelled_on
+        FROM IDENTIFIER(:licences_table_to_read)
+        ORDER BY licence_id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={"licences_table_to_read": licences_table_to_read})
+
+        while True:
+            licences = cursor.fetchmany(batch_size)
+            if not licences:
+                break
+            yield licences
+
+
+def fetch_licence(connection, licences_table_to_read: str, licence_id: str) -> dict[str, object]:
+    """Read one snapshot licence, rejecting missing or ambiguous matches."""
+    query = """
+        SELECT licence_id, customer_id, product_id, seats, starts_on, ends_before, cancelled_on
+        FROM IDENTIFIER(:licences_table_to_read)
+        WHERE licence_id = :licence_id
+        LIMIT 2
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={
+            "licences_table_to_read": licences_table_to_read,
+            "licence_id": licence_id,
+        })
+        licences = cursor.fetchmany(2)
+    if len(licences) != 1:
+        raise ValueError("The saved snapshot must contain exactly one matching licence")
+    return licences[0].asDict()

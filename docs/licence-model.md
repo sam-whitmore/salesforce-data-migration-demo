@@ -2,7 +2,7 @@
 
 The question is: **did each customer's product entitlement arrive in Salesforce accurately?** These are fictional software entitlements, not Gallagher's products or licensing rules.
 
-The model, sample CSVs and SQL preparation have passed a live Databricks run. `--load` builds and tests all three snapshots, then saves customer Accounts and Products. The Product and Licence fields have been created manually in the demo Salesforce account. A live run passed all three model checks, then updated and verified 20 customer Accounts. Product loading now has offline coverage for verification and interrupted-run recovery; live validation is pending. Licence loading remains next.
+The model, sample CSVs and SQL preparation have passed a live Databricks run. Live Salesforce runs verified 20 Accounts and three Products, including repeat updates without creating new records. `--load` now also loads licences and verifies their parent links, seats and dates. The complete flow and interrupted-licence recovery pass offline tests; live licence verification is pending.
 
 ## Relationships
 
@@ -73,9 +73,13 @@ Use an auto-number Name for `Licence__c`, displayed as `LIC-{000000}` starting a
 
 The Product lookup must be optional, with **Clear the value of this field** selected for parent deletion. Salesforce [does not support required or deletion-restricting lookups to Product2](https://resources.docs.salesforce.com/latest/latest/en-us/sfdc/pdf/field_service_dev.pdf); either setting can produce a misleading master-detail error. Deleting a referenced Product can therefore leave a licence without its product. Keep historical products and deactivate them instead. A validation rule to reject licence saves without a Product is not yet installed and would not itself prevent parent deletion.
 
-The planned loader must require both parent IDs. Load and verify customers and products first, then resolve their source IDs to Salesforce record IDs for the licence lookups. Do not create placeholder parents or discard unmatched licences. Migrate historical and future licences too, not just active ones. Verify parent links as well as dates and seats. Product loading is implemented; licence loading and parent resolution remain next.
+The loader requires both parent IDs. It loads and verifies customers and products first, then [looks each licence's parents up by their source IDs](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-upsert-get.html). Their Salesforce record IDs populate `Customer__c` and `Product__c`. A missing, inaccessible or unexpected parent stops processing before that licence is saved. Rejected customer or product rows prevent the licence stage from starting.
 
-### Preparation checks both models
+Every valid term is included, even when expired, future-dated or cancelled. Dates are sent as `YYYY-MM-DD`; an empty cancellation becomes explicit null, which also clears a previously stored cancellation on update. Readback checks all seven mapped fields, including both relationships. Salesforce generates the licence's display name.
+
+Licence attempts and verified outcomes are saved in the run report. Reconciliation resolves the parents again and compares the uncertain licence without writing. Resume checks uncertainty before any further writes, skips verified records and continues the same saved snapshots. Older reports do not acquire a licence stage merely because they contain a licence snapshot name. Parent resolution reflects the records currently returned by Salesforce; it is not a transaction across both systems.
+
+### Preparation checks all three models
 
 Every new `python main.py --load` run builds and tests the three snapshots, then checks their schemas against the expected Salesforce mappings. Default preview skips these model checks and does not contact Salesforce. Recovery commands use the original run scope and saved snapshots without rebuilding preparation.
 
@@ -85,7 +89,7 @@ The check requires the expected source columns and types, including on empty sna
 
 `nillable=True` means a Salesforce field may be empty. Salesforce describes Number fields as `double`, with `precision` and `scale` describing their digits and decimal places. Number (9, 0) does not replace the pipeline's positive whole-number seat checks.
 
-These metadata checks do not read or change business records. A pass does not test individual record access, validation rules, automation, extra required fields or successful writes. Customer and product mappings are loaded; licence mappings are checked but loading remains planned.
+These metadata checks do not read or change business records. A pass does not test individual record access, validation rules, automation, extra required fields or successful writes. All three mappings are loaded after the checks pass; live licence loading still needs verification.
 
 ## Dimensional modelling stretch goal
 

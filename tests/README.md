@@ -21,6 +21,8 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 | [test_salesforce.py](test_salesforce.py) | Are requests authenticated and addressed correctly, and is each successful save followed by verification without unsafe replay? |
 | [test_models.py](test_models.py) | Do preparation checks compare actual snapshot columns and Salesforce metadata, explain mismatches and avoid writing records? |
 | [test_products.py](test_products.py) | Do products retain their active/inactive state, save and verify correctly, and recover safely without expanding older customer-only runs? |
+| [test_licence_data.py](test_licence_data.py) | Do licence dates, seats, IDs and mappings follow the agreed rules, and are snapshot reads bounded? |
+| [test_licences.py](test_licences.py) | Do all sample records load in parent-first order, retain their relationships and terms, update without duplicates and recover safely after interruption? |
 | [test_main.py](test_main.py) | Do the phases work together, preserve preview behaviour, and report complete, incomplete and failed loads accurately? |
 | [test_reporting.py](test_reporting.py) | Is the pending account still recorded when a process exits without closing its report or writing a final summary? |
 | [test_reconcile.py](test_reconcile.py) | Does reconciliation check the destinations, select the uncertain attempt, compare its saved snapshot, and leave accounts and reports unchanged? |
@@ -32,7 +34,7 @@ The retry tests exercise the policy directly. The Salesforce tests check that th
 
 The customer workflow tests answer another question: after a request fails, does processing stop and does the saved report describe the partial progress? They replace the Salesforce operation, so they do not retest its HTTP handling.
 
-Product workflow tests also exercise the real Salesforce request functions with simulated HTTP responses. They check product routing, durable write intent, separate totals, readback failures and interrupted-load recovery together.
+Product and licence workflow tests also exercise the real Salesforce request functions with simulated HTTP responses. They check object routing, durable write intent, separate totals, readback failures and interrupted-load recovery together. Licence tests run the committed CSV examples through simulated services, checking every parent link and term. They cover missing parents, rejected records and preservation of older run scopes.
 
 The reporting test deliberately stops a separate local process after recording an attempt. It checks that the report survives an abrupt process exit; it does not simulate a power failure or guarantee disk hardware behaviour.
 
