@@ -142,4 +142,6 @@ def open_run_report(
             # A stopped run remains failed unless processing explicitly finishes.
             report.write_summary()
             print(f"\nRun outcome: {report.status}")
+            if report.current_customer_id is not None:
+                print(f"Customer needing verification: {report.current_customer_id}")
             print(f"Report saved: {report_path}")

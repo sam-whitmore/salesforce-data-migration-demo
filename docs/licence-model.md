@@ -2,7 +2,7 @@
 
 The question is: **did each customer's product entitlement arrive in Salesforce accurately?** These are fictional software entitlements, not Gallagher's products or licensing rules.
 
-The model, sample CSVs and SQL preparation have passed a live Databricks run. `--load` builds and tests all three snapshots but saves only customer Accounts. Salesforce configuration and loading for products and licences remain pending.
+The model, sample CSVs and SQL preparation have passed a live Databricks run. `--load` builds and tests all three snapshots but saves only customer Accounts. The Product and Licence fields have been created manually in the demo Salesforce account. A live run passed all three model checks, then updated and verified 20 customer Accounts. Product and licence loading is still pending.
 
 ## Relationships
 
@@ -53,7 +53,7 @@ Upload `products_v1.csv` and `licences_v1.csv` to the customer source's catalog 
 
 dbt uses [cautious test selection](https://docs.getdbt.com/reference/node-selection/test-selection-examples): a relationship check runs only when both of its models are selected. The load selects all three models, so both licence relationship checks are included. All six SQL unit tests and 24 data checks passed on Databricks, including the two relationship checks, with no warnings, errors or skips.
 
-## Proposed Salesforce destination
+## Salesforce destination
 
 Keep customers as `Account`. Use the standard [Product2 fields](https://developer.salesforce.com/docs/platform/field-reference/references/field-reference/salesforce-field-reference-product2.html) for the catalogue, and a custom `Licence__c` object for terms. Salesforce supports [custom-object lookups to both Account and Product2](https://developer.salesforce.com/docs/platform/object-reference/guide/sforce-api-objects-custom-objects.html).
 
@@ -63,15 +63,29 @@ Keep customers as `Account`. Use the standard [Product2 fields](https://develope
 | `product_code` / `product_name` / `is_active` | `ProductCode` / `Name` / `IsActive` | Standard fields |
 | `licence_id` | `Licence__c.Source_Licence_ID__c` | Text (36), Unique, External ID |
 | `customer_id` | `Licence__c.Customer__c` | Required lookup to Account |
-| `product_id` | `Licence__c.Product__c` | Required lookup to Product2 |
+| `product_id` | `Licence__c.Product__c` | Optional lookup to Product2; required by the migration model |
 | `seats` | `Licence__c.Seats__c` | Required Number (9, 0) |
 | `starts_on` | `Licence__c.Starts_On__c` | Required Date |
 | `ends_before` | `Licence__c.Ends_Before__c` | Required Date |
 | `cancelled_on` | `Licence__c.Cancelled_On__c` | Optional Date |
 
-Use an auto-number Name for `Licence__c`. Require both lookups and prevent parent deletion while referenced. Load and verify customers and products first, then resolve their source IDs to Salesforce record IDs for the licence lookups. Do not create placeholder parents or discard unmatched licences. Migrate historical and future licences too, not just active ones. Verify parent links as well as dates and seats.
+Use an auto-number Name for `Licence__c`, displayed as `LIC-{000000}` starting at 1. Mark source IDs as case-insensitive and unique external IDs. The Customer lookup is required and prevents deleting a referenced Account.
 
-This is the proposed contract, not a claim that these custom fields already exist or that the integration has been tested live.
+The Product lookup must be optional, with **Clear the value of this field** selected for parent deletion. Salesforce [does not support required or deletion-restricting lookups to Product2](https://resources.docs.salesforce.com/latest/latest/en-us/sfdc/pdf/field_service_dev.pdf); either setting can produce a misleading master-detail error. Deleting a referenced Product can therefore leave a licence without its product. Keep historical products and deactivate them instead. A validation rule to reject licence saves without a Product is not yet installed and would not itself prevent parent deletion.
+
+The planned loader must require both parent IDs. Load and verify customers and products first, then resolve their source IDs to Salesforce record IDs for the licence lookups. Do not create placeholder parents or discard unmatched licences. Migrate historical and future licences too, not just active ones. Verify parent links as well as dates and seats. Product and licence loading is not implemented yet.
+
+### Preparation checks both models
+
+Every new `python main.py --load` run builds and tests the three snapshots, then checks their schemas against the expected Salesforce mappings. Default preview skips these model checks and does not contact Salesforce. Recovery commands continue to use their saved customer snapshot without rebuilding preparation.
+
+Python reads the columns of each exact snapshot through Databricks [DESCRIBE TABLE ... AS JSON](https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-aux-describe-table), supported on Databricks SQL and Runtime 16.2+. It signs in as the app's Run As user and reads Salesforce [object descriptions](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-describe.html). The console places the actual source and destination types beside each other. The mappings are explicit: for example, a source string maps to a Salesforce country picklist, and licence parent UUIDs must later be resolved to Salesforce record IDs.
+
+The check requires the expected source columns and types, including on empty snapshots. It checks destination field visibility, reported create/update permissions, source ID settings, lookup targets and deletion behaviour, seat precision, date types and required fields. Licence Name must be auto-numbered. A mismatch prints the field and setting, then stops before migration or a run report starts. Snapshots already built remain in Databricks.
+
+`nillable=True` means a Salesforce field may be empty. Salesforce describes Number fields as `double`, with `precision` and `scale` describing their digits and decimal places. Number (9, 0) does not replace the pipeline's positive whole-number seat checks.
+
+These metadata checks do not read or change business records. A pass does not test individual record access, validation rules, automation, extra required fields or successful writes. Product and licence mappings are shown as planned; the current loader still saves and verifies customer Accounts only.
 
 ## Dimensional modelling stretch goal
 

@@ -29,7 +29,7 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--load", action="store_true",
-        help="Build and test all three snapshots, then save and verify customer Accounts",
+        help="Build and test snapshots, check destination models, then save and verify customer Accounts",
     )
     mode.add_argument(
         "--reconcile", type=Path, metavar="REPORT",

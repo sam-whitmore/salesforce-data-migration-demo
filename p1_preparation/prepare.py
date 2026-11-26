@@ -7,6 +7,9 @@ from uuid import uuid4
 from dbt.artifacts.schemas.run import RunExecutionResult
 from dbt.cli.main import dbtRunner
 
+from p1_preparation.check_models import ModelCheckError, check_migration_models
+from p1_preparation.dbt_output import DbtProgress, print_dbt_summary
+
 
 class PreparationError(RuntimeError):
     """Migration preparation could not complete."""
@@ -22,7 +25,7 @@ class MigrationTables:
 
 
 def prepare_migration(*, load: bool) -> MigrationTables:
-    """Select the preview source or build and test the three migration snapshots."""
+    """Select the preview source, or prepare snapshots and check destination models."""
     databricks_customers_table = os.environ.get("DATABRICKS_CUSTOMERS_TABLE")
     if not databricks_customers_table:
         raise PreparationError("Missing setting: DATABRICKS_CUSTOMERS_TABLE")
@@ -49,9 +52,15 @@ def prepare_migration(*, load: bool) -> MigrationTables:
     snapshot_id = uuid4().hex
     customers_snapshot_table_name = f"customers_snapshot_{snapshot_id}"
     dbt_project_directory = str(Path(__file__).resolve().parent / "dbt")
-    print("Building and testing customer, product and licence snapshots...\n", flush=True)
-    dbt_build = dbtRunner().invoke([
+    dbt_log_directory = str(Path(dbt_project_directory) / "logs")
+    print("\n1.1 Build and test the Databricks snapshots\n" + "-" * 60, flush=True)
+    print("Connecting to the warehouse; dbt will test transformations, build tables and check the data.", flush=True)
+    print(f"Detailed dbt log: {dbt_log_directory}/dbt.log", flush=True)
+    progress = DbtProgress()
+    dbt_build = dbtRunner(callbacks=[progress.on_event]).invoke([
         "build", # Build the selected model and run its associated tests
+        "--log-level", "warn", # Keep warnings and errors; our callback prints progress.
+        "--log-level-file", "debug", "--log-path", dbt_log_directory,
         "--project-dir", dbt_project_directory, # Where the dbt project lives
         "--profiles-dir", dbt_project_directory, # Where its connection configuration lives
         "--select", "stage_customers", "stage_products", "stage_licences", # Which models to build
@@ -65,8 +74,12 @@ def prepare_migration(*, load: bool) -> MigrationTables:
             "licences_snapshot_table_name": f"licences_snapshot_{snapshot_id}",
         }),
     ])
+    if isinstance(dbt_build.result, RunExecutionResult):
+        print_dbt_summary(dbt_build.result)
     if not dbt_build.success:
-        raise PreparationError("Migration preparation failed. See the dbt errors above.")
+        raise PreparationError(
+            f"Migration preparation failed. See the dbt errors above and {dbt_log_directory}/dbt.log."
+        )
     if not isinstance(dbt_build.result, RunExecutionResult):
         raise PreparationError("dbt did not return build results")
 
@@ -85,7 +98,8 @@ def prepare_migration(*, load: bool) -> MigrationTables:
         products_table=snapshot_tables["stage_products"],
         licences_table=snapshot_tables["stage_licences"],
     )
-    print(f"\nCustomer snapshot: {tables.customers_table}", flush=True)
-    print(f"Product snapshot: {tables.products_table}", flush=True)
-    print(f"Licence snapshot: {tables.licences_table}", flush=True)
+    try:
+        check_migration_models(tables)
+    except ModelCheckError as error:
+        raise PreparationError(str(error)) from None
     return tables

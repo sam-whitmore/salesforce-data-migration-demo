@@ -15,9 +15,11 @@ PYTHON_DOTENV_DISABLED=1 python -m unittest discover -s tests -v
 | [test_validation.py](test_validation.py) | Which customer values are acceptable, and can we report problems without silently changing the input? |
 | [test_mapping.py](test_mapping.py) | Do the intended fields reach the Account payload, with stable customer IDs and an unchanged source record? |
 | [test_databricks.py](test_databricks.py) | Are table names passed correctly, count results kept in order, and batches fetched only as needed? |
-| [test_preparation.py](test_preparation.py) | Does Python select all three models, give them fresh snapshot names, and return a complete set of tested tables? |
+| [test_preparation.py](test_preparation.py) | Does Python build all three snapshots, check their destination models and skip those steps during preview? |
+| [test_dbt_output.py](test_dbt_output.py) | Does compact progress respond to real dbt event messages, and does the summary distinguish warnings, failures and skipped checks? |
 | [test_retries.py](test_retries.py) | Which requests may repeat, how long should they wait, and when must retries stop? |
 | [test_salesforce.py](test_salesforce.py) | Are requests authenticated and addressed correctly, and is each successful save followed by verification without unsafe replay? |
+| [test_models.py](test_models.py) | Do preparation checks compare actual snapshot columns and Salesforce metadata, explain mismatches and avoid writing records? |
 | [test_main.py](test_main.py) | Do the phases work together, preserve preview behaviour, and report complete, incomplete and failed loads accurately? |
 | [test_reporting.py](test_reporting.py) | Is the pending account still recorded when a process exits without closing its report or writing a final summary? |
 | [test_reconcile.py](test_reconcile.py) | Does reconciliation check the destinations, select the uncertain attempt, compare its saved snapshot, and leave accounts and reports unchanged? |

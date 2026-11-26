@@ -28,6 +28,8 @@ def migrate_customers(tables: MigrationTables, *, load: bool) -> None:
     """Run the batches and explain expected database, request or validation failures."""
     phase = "Migration" if load else "Preview"
     print(f"\n2. {phase}\n" + "=" * 60, flush=True)
+    if load:
+        print("Validate each batch, save Accounts, then read them back to verify the mapped fields.", flush=True)
     try:
         with open_run_report(
             tables.customers_table, load=load,
@@ -80,10 +82,9 @@ def load_accounts(
     """Record each attempt before saving, then record successful verification."""
     for account in accounts:
         report.record_load_started(str(account[EXTERNAL_ID_FIELD]))
-        print(f"  Loading customer {account[EXTERNAL_ID_FIELD]}", flush=True)
         outcome, received_account = save_and_verify_account(session, instance_url, account)
         report.record_verified_account(received_account["Id"], outcome)
-        print(f"    {outcome.capitalize()}, verified | Salesforce Account: {received_account['Id']}")
+        print(f"  {outcome.capitalize()}, verified | {account['Name']}", flush=True)
 
 
 def process_customer_batches(
@@ -97,6 +98,7 @@ def process_customer_batches(
     with connect_to_databricks() as connection, requests.Session() as session:
         instance_url = ""
         if load:
+            print("Checking customer IDs and connecting to Salesforce...", flush=True)
             total, unique = count_customers(connection, customers_table_to_read)
             if total != unique:
                 raise ValueError("Customer IDs must be present and unique before loading")

@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Iterator
 
@@ -15,6 +16,17 @@ def connect_to_databricks():
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
+
+
+def describe_table(connection, table_name: str) -> dict[str, str]:
+    """Read column names and types from a prepared snapshot, without reading its records."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DESCRIBE TABLE EXTENDED IDENTIFIER(:table_name) AS JSON",
+            parameters={"table_name": table_name},
+        )
+        description = json.loads(cursor.fetchone()[0])
+    return {column["name"]: column["type"]["name"] for column in description["columns"]}
 
 
 def count_customers(connection, customers_table_to_read: str) -> tuple[int, int]:

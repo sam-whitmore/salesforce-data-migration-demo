@@ -65,6 +65,24 @@ def _account_url(instance_url: str, customer_id: str) -> str:
     )
 
 
+def describe_object(
+    session: requests.Session, instance_url: str, object_name: str
+) -> dict[str, object]:
+    """Read the object's field definitions and permissions visible to this user."""
+    response = request_with_retries(
+        session.get,
+        f"{_salesforce_url(instance_url)}/services/data/v{API_VERSION}"
+        f"/sobjects/{quote(object_name, safe='')}/describe",
+        read_only=True,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Could not inspect Salesforce {object_name} (HTTP {response.status_code}). "
+            "Check the object name and the integration user's access."
+        )
+    return response.json()
+
+
 def save_account(
     session: requests.Session, instance_url: str, account: Mapping[str, object]
 ) -> str:

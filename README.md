@@ -61,6 +61,8 @@ Find the hostname and HTTP path under **SQL Warehouses → your warehouse → Co
 
 For Salesforce, configure an [External Client App with Client Credentials Flow](https://help.salesforce.com/s/articleView?id=sf.configure_client_credentials_flow_for_external_client_apps.htm&language=en_US), the `api` scope, and a Run As user with access to Account and the mapped fields.
 
+Create the [Product and Licence fields](docs/licence-model.md#salesforce-destination) and give the integration user access to them. Every new `--load` run checks all three destination models during preparation.
+
 ### 3. Preview the customers
 
 ```bash
@@ -88,11 +90,13 @@ Accounts prepared for Salesforce: 20
 
 ### 4. Load and verify the customers
 
-This command **builds and tests three Databricks snapshot tables, then creates or updates customer Accounts in Salesforce**. If any dbt check fails, no Salesforce requests are made:
+This command **builds and tests three Databricks snapshot tables, checks their field mappings against Salesforce, then creates or updates customer Accounts**. A failed dbt check prevents Salesforce access; a failed model check prevents Salesforce writes:
 
 ```bash
 python main.py --load
 ```
+
+Preparation prints each snapshot column and its actual type beside its intended Salesforce field and type. It checks both schemas and reported permissions, including the Product lookup limitation. Product and licence mappings are labelled as planned: only Accounts are loaded today. These checks do not establish record-level access or successful writes.
 
 Each batch is prepared, saved and checked before the next batch is fetched. Salesforce requests currently run one account at a time, using one login for the run. The final report counts created, updated and verified accounts.
 
@@ -116,7 +120,9 @@ Accounts verified: 20
 Run outcome: complete
 ```
 
-Console headings separate preparation, migration and the summary. Each load saves a report in `reports/` and prints its path. The `.jsonl` file contains one JSON record per line: the run start, rejected customers and reasons, account load attempts, verified accounts, and a final summary. Git ignores these local reports.
+Console headings follow the code: build and test snapshots, compare models, migrate, then summarise. dbt shows progress every five completed checks and a results table, while warnings and errors remain visible. Detailed dbt output stays in `p1_preparation/dbt/logs/dbt.log`. Model comparisons use bordered tables; each verified Account gets one line with its customer name.
+
+Each load saves a report in `reports/` and prints its path. The `.jsonl` file retains the record IDs, run start, rejected customers and reasons, account load attempts, verified accounts, and final summary. Git ignores these local reports. If a load stops with an unverified customer, the console also prints that customer's source ID.
 
 Before each Salesforce save, an `account_load_started` entry is written, flushed and synced to disk. After readback confirms the fields, an `account_verified` entry is saved the same way. If the first entry has no matching verification, the account needs inspection: the save may or may not have reached Salesforce. A report-storage error stops processing before another save.
 
@@ -126,7 +132,7 @@ Before each Salesforce save, an `account_load_started` entry is written, flushed
 | `incomplete` | Processing finished, but some customers were rejected. Valid customers were still loaded. | 1 |
 | `failed` | An error or interruption stopped processing. Earlier writes may remain in Salesforce. | Nonzero |
 
-Preview reports validation problems without saving a report or failing because of rejected records. A failed dbt check stops before migration, so no migration report is created. A report without a final summary does not establish success. Use the recovery commands below to inspect or resume an interrupted load. Older reports without load-attempt entries cannot identify a save interrupted before verification.
+Preview reports validation problems without saving a report or failing because of rejected records. A failed preparation check stops before migration, so no migration report is created. Snapshots already built by dbt remain in Databricks. A report without a final summary does not establish success. Use the recovery commands below to inspect or resume an interrupted load. Older reports without load-attempt entries cannot identify a save interrupted before verification.
 
 Each load creates three new Delta tables and records their full names in the report. Relationship checks use these snapshots; Python's customer ID check and extraction use the tested customer snapshot. Later source changes or loads do not replace them. The loader uses Salesforce API v68.0 and updates only the mapped customer fields. Product and licence loading is not implemented yet.
 
@@ -134,10 +140,10 @@ Each load creates three new Delta tables and records their full names in the rep
 
 [main.py](main.py) coordinates two phases:
 
-1. [prepare_migration()](p1_preparation/prepare.py) returns a `MigrationTables` value containing the customer source for preview, or all three tested snapshot names for loading.
+1. [prepare_migration()](p1_preparation/prepare.py) returns the customer source for preview, or builds and tests three snapshots and [checks their destination mappings](p1_preparation/check_models.py) before returning their names for loading.
 2. [migrate_customers()](p2_migration/migrate.py) reads the selected customer table in batches, validates and maps the rows, and optionally saves and verifies Salesforce Accounts. Load reports retain all three snapshot names.
 
-The numbered folders make the flow easy to follow: `p0_data/` holds the sample CSV, `p1_preparation/` owns dbt, and `p2_migration/` contains the Databricks reader, Salesforce requests, mapping and validation. `main.py` controls execution. Each phase explains its expected failures; unexpected programming errors retain their traceback for debugging.
+The numbered folders make the flow easy to follow: `p0_data/` holds the sample CSV, `p1_preparation/` owns dbt and model checks, and `p2_migration/` contains the Databricks reader, Salesforce requests, mapping and validation. `shared/console.py` prints plain-text tables without extra dependencies. `main.py` controls execution. Each phase explains its expected failures; unexpected programming errors retain their traceback for debugging.
 
 [stage_customers.sql](p1_preparation/dbt/models/stage_customers.sql) trims surrounding spaces, capitalises country codes and turns empty values into nulls. IDs stay unchanged. Seven dbt data checks cover missing values and duplicate or blank IDs; Python also checks country and postcode formats.
 
