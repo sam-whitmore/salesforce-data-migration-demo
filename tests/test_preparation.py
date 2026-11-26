@@ -26,6 +26,7 @@ class PrepareMigrationTests(unittest.TestCase):
         self.new_snapshot_id = resources.enter_context(patch(
             "p1_preparation.prepare.uuid4", return_value=UUID(int=1),
         ))
+        self.check_models = resources.enter_context(patch("p1_preparation.prepare.check_migration_models"))
         runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
         self.invoke = runner.return_value.invoke
         self.invoke.return_value.success = True
@@ -37,7 +38,7 @@ class PrepareMigrationTests(unittest.TestCase):
             for entity in ("customers", "products", "licences")
         ]
         self.invoke.return_value.result = Mock(
-            spec=RunExecutionResult, results=[SimpleNamespace(node=model) for model in models],
+            spec=RunExecutionResult, results=[SimpleNamespace(node=model, status="success") for model in models],
         )
 
     # Preview selects the original Databricks table without invoking dbt or needing its token.
@@ -53,6 +54,7 @@ class PrepareMigrationTests(unittest.TestCase):
         self.assertIsNone(tables.products_table)
         self.assertIsNone(tables.licences_table)
         self.invoke.assert_not_called()
+        self.check_models.assert_not_called()
         self.new_snapshot_id.assert_not_called()
 
     # All three tested snapshots are returned together, including the tables used by relationship checks.
@@ -75,7 +77,9 @@ class PrepareMigrationTests(unittest.TestCase):
         self.invoke.assert_called_once()
         arguments = self.invoke.call_args.args[0]
         self.assertEqual(arguments[:-1], [
-            "build", "--project-dir", dbt_project_directory, "--profiles-dir", dbt_project_directory,
+            "build", "--log-level", "warn", "--log-level-file", "debug",
+            "--log-path", str(Path(dbt_project_directory) / "logs"),
+            "--project-dir", dbt_project_directory, "--profiles-dir", dbt_project_directory,
             "--select", "stage_customers", "stage_products", "stage_licences",
             "--indirect-selection", "cautious", "--vars",
         ])
@@ -87,6 +91,7 @@ class PrepareMigrationTests(unittest.TestCase):
         self.assertEqual(tables.products_table, "`example`.`prepared`.`products_snapshot_00000000000000000000000000000001`")
         self.assertEqual(tables.licences_table, "`example`.`prepared`.`licences_snapshot_00000000000000000000000000000001`")
         self.assertEqual(os.environ["DBT_ENV_SECRET_DATABRICKS_TOKEN"], "example-token")
+        self.check_models.assert_called_once_with(tables)
 
     # Later loads must not rebuild a snapshot that an earlier load is still reading.
     def test_each_load_requests_a_different_snapshot_table(self):
@@ -116,6 +121,7 @@ class PrepareMigrationTests(unittest.TestCase):
         # Act and Assert
         with self.assertRaisesRegex(PreparationError, "Migration preparation failed"):
             prepare_migration(load=True)
+        self.check_models.assert_not_called()
 
     # An incomplete Databricks table name fails before dbt can write anything.
     def test_incomplete_customers_table_name_is_rejected(self):

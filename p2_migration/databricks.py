@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Iterator
 
@@ -15,6 +16,17 @@ def connect_to_databricks():
         http_path=os.environ["DATABRICKS_HTTP_PATH"],
         access_token=os.environ["DATABRICKS_TOKEN"],
     )
+
+
+def describe_table(connection, table_name: str) -> dict[str, str]:
+    """Read column names and types from a prepared snapshot, without reading its records."""
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "DESCRIBE TABLE EXTENDED IDENTIFIER(:table_name) AS JSON",
+            parameters={"table_name": table_name},
+        )
+        description = json.loads(cursor.fetchone()[0])
+    return {column["name"]: column["type"]["name"] for column in description["columns"]}
 
 
 def count_customers(connection, customers_table_to_read: str) -> tuple[int, int]:
@@ -80,3 +92,67 @@ def fetch_customer(connection, customers_table_to_read: str, customer_id: str) -
     if len(customers) != 1:
         raise ValueError("The saved snapshot must contain exactly one matching customer")
     return customers[0].asDict()
+
+
+def count_products(connection, products_table_to_read: str) -> tuple[int, int]:
+    query = """
+        SELECT
+            COUNT(*) AS total_products,
+            COUNT(DISTINCT product_id) AS unique_product_ids
+        FROM IDENTIFIER(:products_table_to_read)
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            query,
+            parameters={"products_table_to_read": products_table_to_read},
+        )
+        total_products, unique_product_ids = cursor.fetchone()
+
+    return total_products, unique_product_ids
+
+
+def fetch_product_batches(
+    connection, products_table_to_read: str, batch_size: int
+) -> Iterator[list[Row]]:
+    """Yield product records in batches without collecting the full result."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+
+    query = """
+        SELECT
+            product_id,
+            product_code,
+            product_name,
+            is_active
+        FROM IDENTIFIER(:products_table_to_read)
+        ORDER BY product_id
+    """
+
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={"products_table_to_read": products_table_to_read})
+
+        while True:
+            products = cursor.fetchmany(batch_size)
+            if not products:
+                break
+            yield products
+
+
+def fetch_product(connection, products_table_to_read: str, product_id: str) -> dict[str, object]:
+    """Read one snapshot product, rejecting missing or ambiguous matches."""
+    query = """
+        SELECT product_id, product_code, product_name, is_active
+        FROM IDENTIFIER(:products_table_to_read)
+        WHERE product_id = :product_id
+        LIMIT 2
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, parameters={
+            "products_table_to_read": products_table_to_read,
+            "product_id": product_id,
+        })
+        products = cursor.fetchmany(2)
+    if len(products) != 1:
+        raise ValueError("The saved snapshot must contain exactly one matching product")
+    return products[0].asDict()

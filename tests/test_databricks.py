@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from contextlib import nullcontext
@@ -6,6 +7,7 @@ from unittest.mock import Mock, patch
 from p2_migration.databricks import (
     connect_to_databricks,
     count_customers,
+    describe_table,
     fetch_customer_batches,
 )
 from tests.fake_database import FakeDatabase
@@ -20,6 +22,32 @@ class DatabricksConnectionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Missing Databricks settings: DATABRICKS_SERVER_HOSTNAME"):
                 connect_to_databricks()
             connect.assert_not_called()
+
+    # Schema checks describe the exact snapshot and parse only column names and types.
+    def test_describes_snapshot_columns_using_a_bound_table_name(self):
+        # Arrange
+        database = Mock()
+        cursor = Mock()
+        database.cursor.return_value = nullcontext(cursor)
+        cursor.fetchone.return_value = (json.dumps({
+            "table_name": "licences_snapshot_example",
+            "columns": [
+                {"name": "licence_id", "type": {"name": "string", "collation": "UTF8_BINARY"}},
+                {"name": "seats", "type": {"name": "bigint"}},
+                {"name": "starts_on", "type": {"name": "date"}},
+            ],
+        }),)
+        table = "`test`.`migration`.`licences_snapshot_example`"
+
+        # Act
+        columns = describe_table(database, table)
+
+        # Assert
+        self.assertEqual(columns, {"licence_id": "string", "seats": "bigint", "starts_on": "date"})
+        cursor.execute.assert_called_once_with(
+            "DESCRIBE TABLE EXTENDED IDENTIFIER(:table_name) AS JSON", parameters={"table_name": table},
+        )
+        cursor.fetchone.assert_called_once()
 
 
 class FetchCustomerBatchesTests(unittest.TestCase):

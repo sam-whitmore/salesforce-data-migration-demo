@@ -29,3 +29,17 @@ def validate_customer(customer: Mapping[str, object]) -> list[str]:
             errors.append("NZ billing_postal_code must contain exactly four digits")
 
     return errors
+
+
+def validate_product(product: Mapping[str, object]) -> list[str]:
+    """Check the destination's text limits and require an actual active/inactive value."""
+    errors = []
+    for field, limit in (("product_id", 36), ("product_code", 255), ("product_name", 255)):
+        value = product.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"{field} must be non-empty text")
+        elif len(value) > limit:
+            errors.append(f"{field} must be at most {limit} characters")
+    if not isinstance(product.get("is_active"), bool):
+        errors.append("is_active must be true or false")
+    return errors

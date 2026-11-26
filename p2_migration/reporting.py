@@ -16,7 +16,7 @@ REPORT_DIRECTORY = Path(__file__).resolve().parents[1] / "reports"
 
 @dataclass
 class MigrationReport:
-    """Count progress without keeping every customer in memory."""
+    """Count progress without keeping every source record in memory."""
 
     file: TextIO | None = None
     status: str = "failed"
@@ -28,6 +28,22 @@ class MigrationReport:
     previously_verified_accounts: int = 0
     reconciled_accounts: int = 0
     current_customer_id: str | None = None
+
+    total_products: int = 0
+    rejected_products: int = 0
+    prepared_products: int = 0
+    created_products: int = 0
+    updated_products: int = 0
+    previously_verified_products: int = 0
+    reconciled_products: int = 0
+    current_product_id: str | None = None
+
+    @property
+    def verified_products(self) -> int:
+        return (
+            self.created_products + self.updated_products
+            + self.previously_verified_products + self.reconciled_products
+        )
 
     @property
     def verified_accounts(self) -> int:
@@ -87,6 +103,15 @@ class MigrationReport:
             accounts_reconciled=self.reconciled_accounts,
             accounts_verified=self.verified_accounts,
             unverified_customer_id=self.current_customer_id,
+            products_retrieved=self.total_products,
+            products_rejected=self.rejected_products,
+            products_prepared=self.prepared_products,
+            products_created=self.created_products,
+            products_updated=self.updated_products,
+            products_previously_verified=self.previously_verified_products,
+            products_reconciled=self.reconciled_products,
+            products_verified=self.verified_products,
+            unverified_product_id=self.current_product_id,
         )
 
     def record_reconciled_account(self, account_id: object) -> None:
@@ -96,6 +121,36 @@ class MigrationReport:
         )
         self.reconciled_accounts += 1
         self.current_customer_id = None
+
+    def record_product_load_started(self, product_id: str) -> None:
+        """Persist the product's identity before its external write."""
+        self.current_product_id = product_id
+        self.write_event("product_load_started", product_id=product_id)
+
+    def reject_product(self, product_id: object, errors: list[str]) -> None:
+        self.rejected_products += 1
+        self.write_event(
+            "product_rejected",
+            product_id=None if product_id is None else str(product_id), reasons=errors,
+        )
+
+    def record_verified_product(self, salesforce_id: object, outcome: str) -> None:
+        self.write_event(
+            "product_verified", product_id=self.current_product_id,
+            salesforce_id=salesforce_id, outcome=outcome,
+        )
+        if outcome == "created":
+            self.created_products += 1
+        else:
+            self.updated_products += 1
+        self.current_product_id = None
+
+    def record_reconciled_product(self, salesforce_id: object) -> None:
+        self.write_event(
+            "product_reconciled", product_id=self.current_product_id, salesforce_id=salesforce_id,
+        )
+        self.reconciled_products += 1
+        self.current_product_id = None
 
 
 @contextmanager
@@ -117,6 +172,7 @@ def lock_report(file: TextIO) -> Iterator[None]:
 def open_run_report(
     customers_table_to_read: str, *, load: bool,
     products_table: str | None = None, licences_table: str | None = None,
+    load_products: bool = False,
 ) -> Iterator[MigrationReport]:
     """Save load outcomes locally; previews only keep counters in memory."""
     if not load:
@@ -131,6 +187,7 @@ def open_run_report(
             "run_started",
             customers_table=customers_table_to_read,
             products_table=products_table,
+            load_products=load_products,
             licences_table=licences_table,
             databricks_server_hostname=os.environ.get("DATABRICKS_SERVER_HOSTNAME"),
             salesforce_my_domain_url=os.environ.get("SALESFORCE_MY_DOMAIN_URL"),
@@ -142,4 +199,8 @@ def open_run_report(
             # A stopped run remains failed unless processing explicitly finishes.
             report.write_summary()
             print(f"\nRun outcome: {report.status}")
+            if report.current_customer_id is not None:
+                print(f"Customer needing verification: {report.current_customer_id}")
+            if report.current_product_id is not None:
+                print(f"Product needing verification: {report.current_product_id}")
             print(f"Report saved: {report_path}")

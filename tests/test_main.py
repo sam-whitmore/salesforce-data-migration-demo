@@ -15,6 +15,7 @@ from databricks.sql.types import Row
 from dbt.artifacts.schemas.run import RunExecutionResult
 
 from main import main
+from p1_preparation.check_models import ModelCheckError
 from p1_preparation.prepare import PreparationError
 from p2_migration.migrate import MigrationError
 from p2_migration.reporting import MigrationReport
@@ -48,6 +49,7 @@ class MainTests(unittest.TestCase):
             "DATABRICKS_TOKEN": "example-token",
         }, clear=True))
 
+        self.check_models = resources.enter_context(patch("p1_preparation.prepare.check_migration_models"))
         runner = resources.enter_context(patch("p1_preparation.prepare.dbtRunner"))
         self.build = runner.return_value.invoke
         self.build.return_value.success = True
@@ -60,6 +62,7 @@ class MainTests(unittest.TestCase):
             spec=RunExecutionResult, results=[Mock(node=model) for model in models],
         )
 
+        self.process_products = resources.enter_context(patch("p2_migration.migrate.process_product_batches"))
         self.database = FakeDatabase(customers=[])
         self.connect_to_databricks = resources.enter_context(patch(
             "p2_migration.migrate.connect_to_databricks", return_value=nullcontext(self.database)
@@ -94,6 +97,8 @@ class MainTests(unittest.TestCase):
 
         # Assert
         self.build.assert_not_called()
+        self.process_products.assert_not_called()
+        self.check_models.assert_not_called()
         self.assertEqual(self.database.parameters["customers_table_to_read"], "test.raw.customers")
         self.connect_to_salesforce.assert_not_called()
         self.save_and_verify.assert_not_called()
@@ -116,6 +121,7 @@ class MainTests(unittest.TestCase):
 
         # Assert
         self.build.assert_called_once()
+        self.check_models.assert_called_once()
         self.assertEqual(self.database.parameters["customers_table_to_read"], "test.migration.customers_snapshot_example")
         self.count_customers.assert_called_once_with(self.database, "test.migration.customers_snapshot_example")
         self.connect_to_salesforce.assert_called_once()
@@ -298,13 +304,30 @@ class MainTests(unittest.TestCase):
         self.save_and_verify.assert_not_called()
         self.assertFalse(self.report_directory.exists())
 
+    # Failed model checks stop after dbt, before a report or any Salesforce writes exist.
+    def test_model_mismatch_prevents_migration(self):
+        # Arrange
+        self.check_models.side_effect = ModelCheckError("Licence__c.Seats__c needs attention")
+
+        # Act
+        with self.assertRaisesRegex(PreparationError, "Licence__c.Seats__c needs attention"):
+            main(["--load"])
+
+        # Assert
+        self.build.assert_called_once()
+        self.check_models.assert_called_once()
+        self.connect_to_databricks.assert_not_called()
+        self.connect_to_salesforce.assert_not_called()
+        self.save_and_verify.assert_not_called()
+        self.assertFalse(self.report_directory.exists())
+
     # A database failure is identified as Databricks, without showing raw error details.
     def test_databricks_failure_is_reported_during_preview(self):
         # Arrange
         self.connect_to_databricks.side_effect = OperationalError("private connection details")
 
         # Act and Assert
-        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+        with self.assertRaisesRegex(MigrationError, "Could not read migration data from Databricks") as raised:
             main([])
         self.assertNotIn("private connection details", str(raised.exception))
         self.assertNotIn("Salesforce", str(raised.exception))
@@ -319,7 +342,7 @@ class MainTests(unittest.TestCase):
         ])
 
         # Act and Assert
-        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+        with self.assertRaisesRegex(MigrationError, "Could not read migration data from Databricks") as raised:
             main(["--load"])
         self.assertIn("Earlier Salesforce writes may have completed", str(raised.exception))
         self.assertEqual(self.save_and_verify.call_count, 1)
