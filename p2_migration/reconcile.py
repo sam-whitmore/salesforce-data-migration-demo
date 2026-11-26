@@ -7,6 +7,7 @@ import requests
 from databricks.sql.exc import Error as DatabricksError
 
 from p2_migration.databricks import connect_to_databricks, fetch_customer
+from p2_migration.licences import compare_snapshot_licence
 from p2_migration.mapping import prepare_salesforce_account
 from p2_migration.products import compare_snapshot_product
 from p2_migration.salesforce import (
@@ -34,6 +35,9 @@ class RecordedRun:
     products_table: str | None = None
     uncertain_product_id: str | None = None
     verified_product_ids: frozenset[str] = frozenset()
+    licences_table: str | None = None
+    uncertain_licence_id: str | None = None
+    verified_licence_ids: frozenset[str] = frozenset()
 
 
 def read_recorded_run(report_path: Path) -> RecordedRun:
@@ -44,7 +48,8 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
     pending = None
     finished = False
     resumed = False
-    verified = {"customer": set(), "product": set()}
+    verified = {"customer": set(), "product": set(), "licence": set()}
+    licences_table = None
     products_table = None
     last_status = None
 
@@ -79,6 +84,16 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                     parts = products_table.split(".")
                     if len(parts) != 3 or not parts[-1].strip("`").startswith("products_snapshot_"):
                         raise ValueError("Product recovery requires a retained products_snapshot table")
+                load_licences = entry.get("load_licences", False)
+                if not isinstance(load_licences, bool):
+                    raise ValueError("The licence load scope must be true or false")
+                if load_licences:
+                    licences_table = entry.get("licences_table")
+                    if products_table is None or not isinstance(licences_table, str):
+                        raise ValueError("Licence recovery requires product loading and a saved licence snapshot")
+                    parts = licences_table.split(".")
+                    if len(parts) != 3 or not parts[-1].strip("`").startswith("licences_snapshot_"):
+                        raise ValueError("Licence recovery requires a retained licences_snapshot table")
                 databricks_server_hostname = entry.get("databricks_server_hostname")
                 salesforce_my_domain_url = entry.get("salesforce_my_domain_url")
                 for address in (databricks_server_hostname, salesforce_my_domain_url):
@@ -103,11 +118,16 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                 "product_load_started": ("product", "started"),
                 "product_verified": ("product", "verified"),
                 "product_reconciled": ("product", "reconciled"),
+                "licence_load_started": ("licence", "started"),
+                "licence_verified": ("licence", "verified"),
+                "licence_reconciled": ("licence", "reconciled"),
             }
             if event in progress_events:
                 entity, action = progress_events[event]
                 if entity == "product" and products_table is None:
                     raise ValueError("The report does not include product loading")
+                if entity == "licence" and licences_table is None:
+                    raise ValueError("The report does not include licence loading")
                 source_id = entry.get(f"{entity}_id")
                 if not isinstance(source_id, str) or not source_id.strip():
                     raise ValueError(f"Missing {entity} ID on report line {line_number}")
@@ -124,13 +144,15 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
                         raise ValueError("Verification has no matching attempt; older or inconsistent reports need manual inspection")
                     pending = None
                     verified[entity].add(source_id)
-            elif event in ("customer_rejected", "product_rejected"):
+            elif event in ("customer_rejected", "product_rejected", "licence_rejected"):
                 if event == "product_rejected" and products_table is None:
                     raise ValueError("The report does not include product loading")
+                if event == "licence_rejected" and licences_table is None:
+                    raise ValueError("The report does not include licence loading")
                 if pending is not None:
                     raise ValueError("The report rejects a record during an unfinished load attempt")
             elif event == "run_finished":
-                for entity in ("customer", "product"):
+                for entity in ("customer", "product", "licence"):
                     unverified = entry.get(f"unverified_{entity}_id")
                     if unverified is not None and pending != (entity, unverified):
                         raise ValueError("The summary has no matching attempt; inspect the report manually")
@@ -154,6 +176,9 @@ def read_recorded_run(report_path: Path) -> RecordedRun:
         products_table=products_table,
         uncertain_product_id=pending[1] if pending and pending[0] == "product" else None,
         verified_product_ids=frozenset(verified["product"]),
+        licences_table=licences_table,
+        uncertain_licence_id=pending[1] if pending and pending[0] == "licence" else None,
+        verified_licence_ids=frozenset(verified["licence"]),
     )
 
 
@@ -177,11 +202,20 @@ def reconcile_migration(report_path: Path) -> None:
         recorded_run = read_recorded_run(report_path)
         print(f"Report: {report_path}")
         print(f"Saved snapshot: {recorded_run.customers_table}")
-        if recorded_run.uncertain_customer_id is None and recorded_run.uncertain_product_id is None:
+        if all(source_id is None for source_id in (
+            recorded_run.uncertain_customer_id, recorded_run.uncertain_product_id, recorded_run.uncertain_licence_id,
+        )):
             print("No recorded uncertain attempt to check. This does not establish a complete migration.")
             return
         check_destinations(recorded_run)
-        if recorded_run.uncertain_product_id is not None:
+        if recorded_run.uncertain_licence_id is not None:
+            if recorded_run.licences_table is None:
+                raise ValueError("Licence recovery requires its saved snapshot")
+            print(f"Licence: {recorded_run.uncertain_licence_id}")
+            print(f"Saved licence snapshot: {recorded_run.licences_table}")
+            compare_snapshot_licence(recorded_run.licences_table, recorded_run.uncertain_licence_id)
+            print("Result: all 7 mapped licence fields, including both links, currently match. No records were changed.")
+        elif recorded_run.uncertain_product_id is not None:
             if recorded_run.products_table is None:
                 raise ValueError("Product recovery requires its saved snapshot")
             print(f"Product: {recorded_run.uncertain_product_id}")

@@ -9,6 +9,7 @@ from p2_migration.retries import request_with_retries
 API_VERSION = "68.0"
 CUSTOMER_ID_FIELD = "Source_Customer_ID__c"
 PRODUCT_ID_FIELD = "Source_Product_ID__c"
+LICENCE_ID_FIELD = "Source_Licence_ID__c"
 
 
 class RecordUnavailableError(RuntimeError):
@@ -176,4 +177,21 @@ def save_and_verify_product(
     differences = compare_fields(product, received)
     if differences:
         raise ValueError("Product was saved, but these fields differ: " + ", ".join(differences))
+    return outcome, received
+
+
+def read_licence(session: requests.Session, instance_url: str, licence_id: str) -> dict[str, object]:
+    """Find a Licence__c record by its source licence ID."""
+    return _read_record(session, instance_url, "Licence__c", LICENCE_ID_FIELD, licence_id)
+
+
+def save_and_verify_licence(
+    session: requests.Session, instance_url: str, licence: Mapping[str, object],
+) -> tuple[str, dict[str, object]]:
+    """Save one licence and verify its two relationships, seats, dates and source ID."""
+    outcome = _save_record(session, instance_url, "Licence__c", LICENCE_ID_FIELD, licence)
+    received = read_licence(session, instance_url, str(licence[LICENCE_ID_FIELD]))
+    differences = compare_fields(licence, received)
+    if differences:
+        raise ValueError("Licence was saved, but these fields differ: " + ", ".join(differences))
     return outcome, received

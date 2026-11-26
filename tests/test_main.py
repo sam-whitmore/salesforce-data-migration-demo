@@ -62,6 +62,7 @@ class MainTests(unittest.TestCase):
             spec=RunExecutionResult, results=[Mock(node=model) for model in models],
         )
 
+        self.process_licences = resources.enter_context(patch("p2_migration.migrate.process_licence_batches"))
         self.process_products = resources.enter_context(patch("p2_migration.migrate.process_product_batches"))
         self.database = FakeDatabase(customers=[])
         self.connect_to_databricks = resources.enter_context(patch(
@@ -98,6 +99,7 @@ class MainTests(unittest.TestCase):
         # Assert
         self.build.assert_not_called()
         self.process_products.assert_not_called()
+        self.process_licences.assert_not_called()
         self.check_models.assert_not_called()
         self.assertEqual(self.database.parameters["customers_table_to_read"], "test.raw.customers")
         self.connect_to_salesforce.assert_not_called()

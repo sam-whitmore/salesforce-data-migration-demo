@@ -122,7 +122,7 @@ def check_migration_models(tables: "MigrationTables") -> None:
         raise ModelCheckError(f"Migration model checks failed: {len(problems)} issue(s). No Salesforce records were changed.")
 
     print("\nModel checks passed. Preparation is complete.", flush=True)
-    print("Next: load customer Accounts, then Products. Licence loading is still planned.", flush=True)
+    print("Next: load customers, products and licences, verifying each record and both licence links.", flush=True)
 
 
 def check_source_columns(object_name: str, columns: dict[str, str]) -> list[str]:
@@ -144,8 +144,7 @@ def print_model_alignment(
     """Show actual types alongside the intended field mappings."""
     fields = {field["name"]: field for field in description["fields"]}
     entity = {"Account": "Customers", "Product2": "Products", "Licence__c": "Licences"}[object_name]
-    scope = "load in this run" if object_name in ("Account", "Product2") else "check only; loading planned"
-    print(f"\n{entity} → {object_name} ({scope})", flush=True)
+    print(f"\n{entity} → {object_name} (load in this run)", flush=True)
     print(f"Snapshot: {table_name}", flush=True)
     rows = []
     for column, (_, target) in FIELD_MAPPINGS[object_name].items():
@@ -153,7 +152,7 @@ def print_model_alignment(
         rows.append((column, columns.get(column, "missing"), target, target_type))
     print_table(("Databricks field", "Type", "Salesforce field", "Type"), rows)
     if object_name == "Licence__c":
-        print("Parent IDs need resolving to Salesforce record IDs before licence loading.", flush=True)
+        print("Licence loading resolves source parent IDs to Salesforce record IDs before saving.", flush=True)
 
 
 def check_object_setup(object_name: str, description: dict[str, Any]) -> list[str]:
