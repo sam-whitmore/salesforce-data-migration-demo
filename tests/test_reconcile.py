@@ -42,7 +42,7 @@ class ReconciliationTests(unittest.TestCase):
             "SALESFORCE_MY_DOMAIN_URL": "https://example.my.salesforce.com",
         }, clear=True))
         self.prepare = resources.enter_context(patch("main.prepare_migration"))
-        self.migrate = resources.enter_context(patch("main.migrate_customers"))
+        self.migrate = resources.enter_context(patch("main.migrate_records"))
         self.customer = Row(
             customer_id="customer-1", legal_name="Example Company", billing_city="Whangārei",
             billing_postal_code="0110", billing_country_code="NZ",

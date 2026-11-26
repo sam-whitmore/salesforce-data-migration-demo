@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import requests
 
 from p2_migration.salesforce import (
-    compare_account,
+    compare_fields,
     connect_to_salesforce,
     read_account,
     save_account,
@@ -320,7 +320,7 @@ class SalesforceTests(unittest.TestCase):
         received = {**self.account, "Id": "salesforce-account-1", "OwnerId": "owner-1"}
 
         # Act
-        differences = compare_account(self.account, received)
+        differences = compare_fields(self.account, received)
 
         # Assert
         self.assertEqual(differences, [])
@@ -333,7 +333,7 @@ class SalesforceTests(unittest.TestCase):
         received["BillingPostalCode"] = "110"
 
         # Act
-        differences = compare_account(self.account, received)
+        differences = compare_fields(self.account, received)
 
         # Assert
         self.assertEqual(differences, ["Name", "BillingPostalCode"])

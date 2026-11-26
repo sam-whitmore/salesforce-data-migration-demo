@@ -4,9 +4,9 @@
 
 I created this project in response to Gallagher's advertised [Data Engineer](https://careers.gallagher.com/jobs/8676662-data-engineer) opportunity. The goal is to move customer and licence data into Salesforce and check that it arrived correctly.
 
-The customer migration works today. Preparation includes the [product and licence models](docs/licence-model.md), validated in a live Databricks run. Salesforce loading still covers customer Accounts only. See the [glossary](GLOSSARY.md) for the business terms.
+The customer migration works today. Preparation includes the [product and licence models](docs/licence-model.md), validated in a live Databricks run. Salesforce loading now covers customer Accounts and Products; live product verification is the next check. Licence loading remains next. See the [glossary](GLOSSARY.md) for the business terms.
 
-Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original customer source without writing to either system. With `--load`, dbt creates and tests customer, product and licence snapshots, including their relationships. Python reads the tested customer table, saves each valid Account and checks all five mapped fields by readback. A live run passed all six SQL unit tests and 24 data checks, built all three snapshots, and updated and verified all 20 customer Accounts. Large-scale performance has not been tested.
+Python reads fictional customers from Databricks in batches, validates them, and prepares Salesforce accounts. By default it previews the original customer source without writing to either system. With `--load`, dbt creates and tests customer, product and licence snapshots, including their relationships. Python loads customers and then products from their tested tables, checking every mapped field by readback. Inactive products are included because existing licences may still refer to them. A live run passed all six SQL unit tests and 24 data checks, built all three snapshots, and updated and verified all 20 customer Accounts. Large-scale performance has not been tested.
 
 The checks require non-empty text for customer IDs, names, cities, postcodes and country codes. Country codes must have two uppercase letters; NZ postcodes must have [four digits, including leading zeros](https://www.nzpost.co.nz/personal/sending-in-nz/postcodes). These are format checks, not address verification. A full load also checks that source IDs are present and unique before sending records.
 
@@ -88,23 +88,23 @@ Rejected customers: 0
 Accounts prepared for Salesforce: 20
 ```
 
-### 4. Load and verify the customers
+### 4. Load and verify customers and products
 
-This command **builds and tests three Databricks snapshot tables, checks their field mappings against Salesforce, then creates or updates customer Accounts**. A failed dbt check prevents Salesforce access; a failed model check prevents Salesforce writes:
+This command **builds and tests three Databricks snapshot tables, checks their field mappings against Salesforce, then creates or updates customer Accounts and Products**. A failed dbt check prevents Salesforce access; a failed model check prevents Salesforce writes:
 
 ```bash
 python main.py --load
 ```
 
-Preparation prints each snapshot column and its actual type beside its intended Salesforce field and type. It checks both schemas and reported permissions, including the Product lookup limitation. Product and licence mappings are labelled as planned: only Accounts are loaded today. These checks do not establish record-level access or successful writes.
+Preparation prints each snapshot column and its actual type beside its intended Salesforce field and type. It checks both schemas and reported permissions, including the Product lookup limitation. Customer and product mappings are marked for loading; licence mappings are checked in preparation for the next increment. These checks do not establish record-level access or successful writes.
 
-Each batch is prepared, saved and checked before the next batch is fetched. Salesforce requests currently run one account at a time, using one login for the run. The final report counts created, updated and verified accounts.
+Each batch is prepared, saved and checked before the next batch is fetched. Salesforce requests run one record at a time, with a login for each stage. The final report counts created, updated and verified Accounts and Products separately. A failed product stage leaves the run failed even if all Accounts were verified.
 
 Salesforce requests make at most three attempts. Reads retry timeouts, broken connections and HTTP 429, 500, 502, 503 or 504, normally waiting one then two seconds. A valid `Retry-After` header can extend each wait to 30 seconds; a longer requested wait stops the run. Other HTTP errors, including 401 and 403, and certificate errors are not retried.
 
 Authentication and saves retry only a connection timeout that [Requests identifies as safe to retry](https://requests.readthedocs.io/en/latest/_modules/requests/exceptions/#ConnectTimeout). A lost save response leaves the outcome uncertain, so the run stops for inspection. Retrying a verification read never repeats the save. The console identifies each retry without printing credentials or raw error details.
 
-With all 20 Accounts already present, a successful rerun ends with:
+With all 20 Accounts and three Products already present, a successful rerun ends with:
 
 ```text
 Summary
@@ -116,32 +116,37 @@ Accounts prepared for Salesforce: 20
 Accounts created: 0
 Accounts updated: 20
 Accounts verified: 20
+Products retrieved: 3
+Products rejected: 0
+Products created: 0
+Products updated: 3
+Products verified: 3
 
 Run outcome: complete
 ```
 
-Console headings follow the code: build and test snapshots, compare models, migrate, then summarise. dbt shows progress every five completed checks and a results table, while warnings and errors remain visible. Detailed dbt output stays in `p1_preparation/dbt/logs/dbt.log`. Model comparisons use bordered tables; each verified Account gets one line with its customer name.
+Console headings follow the code: build and test snapshots, compare models, migrate, then summarise. dbt shows progress every five completed checks and a results table, while warnings and errors remain visible. Detailed dbt output stays in `p1_preparation/dbt/logs/dbt.log`. Model comparisons use bordered tables; each verified record gets one line with its name.
 
-Each load saves a report in `reports/` and prints its path. The `.jsonl` file retains the record IDs, run start, rejected customers and reasons, account load attempts, verified accounts, and final summary. Git ignores these local reports. If a load stops with an unverified customer, the console also prints that customer's source ID.
+Each load saves a report in `reports/` and prints its path. The `.jsonl` file retains the record IDs, run scope, rejections and reasons, load attempts, verified records, and final summary. Git ignores these local reports. If a load stops with an unverified record, the console also prints its source ID.
 
-Before each Salesforce save, an `account_load_started` entry is written, flushed and synced to disk. After readback confirms the fields, an `account_verified` entry is saved the same way. If the first entry has no matching verification, the account needs inspection: the save may or may not have reached Salesforce. A report-storage error stops processing before another save.
+Before each Salesforce save, an `account_load_started` or `product_load_started` entry is written, flushed and synced to disk. After readback confirms the fields, an `account_verified` or `product_verified` entry is saved the same way. If the first entry has no matching verification, the record needs inspection: the save may or may not have reached Salesforce. A report-storage error stops processing before another save.
 
 | Load outcome | Meaning | Exit status |
 | --- | --- | --- |
-| `complete` | Every retrieved customer was verified; an empty source completes with zero counts. | 0 |
-| `incomplete` | Processing finished, but some customers were rejected. Valid customers were still loaded. | 1 |
+| `complete` | Every retrieved record in the run’s scope was verified; an empty source completes with zero counts. | 0 |
+| `incomplete` | Processing finished, but some records were rejected. Valid records were still loaded. | 1 |
 | `failed` | An error or interruption stopped processing. Earlier writes may remain in Salesforce. | Nonzero |
 
 Preview reports validation problems without saving a report or failing because of rejected records. A failed preparation check stops before migration, so no migration report is created. Snapshots already built by dbt remain in Databricks. A report without a final summary does not establish success. Use the recovery commands below to inspect or resume an interrupted load. Older reports without load-attempt entries cannot identify a save interrupted before verification.
 
-Each load creates three new Delta tables and records their full names in the report. Relationship checks use these snapshots; Python's customer ID check and extraction use the tested customer snapshot. Later source changes or loads do not replace them. The loader uses Salesforce API v68.0 and updates only the mapped customer fields. Product and licence loading is not implemented yet.
+Each load creates three new Delta tables and records their full names in the report. Relationship checks use these snapshots; Python's ID checks and extraction use those tested tables. Later source changes or loads do not replace them. The loader uses Salesforce API v68.0 and updates only the mapped fields. Licence loading is not implemented yet.
 
 ## How the Code Fits Together
 
 [main.py](main.py) coordinates two phases:
 
 1. [prepare_migration()](p1_preparation/prepare.py) returns the customer source for preview, or builds and tests three snapshots and [checks their destination mappings](p1_preparation/check_models.py) before returning their names for loading.
-2. [migrate_customers()](p2_migration/migrate.py) reads the selected customer table in batches, validates and maps the rows, and optionally saves and verifies Salesforce Accounts. Load reports retain all three snapshot names.
+2. [migrate_records()](p2_migration/migrate.py) coordinates customer and product loading. The [product stage](p2_migration/products.py) reads batches, validates and maps the rows, then saves and verifies Salesforce Products. Load reports retain all three snapshot names; preview still reads only customers.
 
 The numbered folders make the flow easy to follow: `p0_data/` holds the sample CSV, `p1_preparation/` owns dbt and model checks, and `p2_migration/` contains the Databricks reader, Salesforce requests, mapping and validation. `shared/console.py` prints plain-text tables without extra dependencies. `main.py` controls execution. Each phase explains its expected failures; unexpected programming errors retain their traceback for debugging.
 
@@ -149,7 +154,7 @@ The numbered folders make the flow easy to follow: `p0_data/` holds the sample C
 
 The dbt model is still called `stage_customers`. Its database table is named `workspace.migration.customers_snapshot_<unique_id>`; dbt calls this alternate name an **alias**. Python supplies a fresh name for every load. The full name appears in the terminal and in the migration report's first record. Both phases use the existing `.env` settings.
 
-Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup is not implemented. A new `--load` creates fresh snapshots; `--resume` continues customer loading from the existing customer snapshot. These are stored copies for one load, not dbt's separate change-history feature called `snapshot`. Original source tables and any old `stage_customers` view are left untouched.
+Snapshots remain in Databricks for inspection, including after a failed data check. Do not edit or replace them. Retaining them uses storage; automatic cleanup is not implemented. A new `--load` creates fresh snapshots; `--resume` continues the original run from its saved snapshots. These are stored copies for one load, not dbt's separate change-history feature called `snapshot`. Original source tables and any old `stage_customers` view are left untouched.
 
 ## Check an Interrupted Load
 
@@ -159,25 +164,25 @@ Use the report path printed by the load, replacing `YOUR_RUN_ID` below:
 python main.py --reconcile reports/YOUR_RUN_ID.jsonl
 ```
 
-This reads the report to find an account load attempt without recorded verification. It reads that customer from the saved snapshot and compares the five mapped fields with Salesforce. It does not run dbt, save accounts, change the report or resume loading. `--reconcile` cannot be combined with `--load`.
+This finds an Account or Product load attempt without recorded verification. It reads the corresponding saved snapshot and compares all mapped fields with Salesforce. It does not run dbt, save records, change the report or resume loading. `--reconcile` cannot be combined with `--load`.
 
-Matching fields mean the account matches **now**, not that a particular request succeeded or its automation ran only once. Differences, an unavailable account or a failed check produce a nonzero exit. With no recorded uncertain attempt, the command exits successfully without contacting either service; this does not establish that the migration finished or recheck previously verified accounts.
+Matching fields mean the record matches **now**, not that a particular request succeeded or its automation ran only once. Differences, an unavailable record or a failed check produce a nonzero exit. With no recorded uncertain attempt, the command exits successfully without contacting either service; this does not establish that the migration finished or recheck previously verified records.
 
-New reports record `DATABRICKS_SERVER_HOSTNAME` and `SALESFORCE_MY_DOMAIN_URL`, without tokens or client credentials. Before checking an uncertain account, reconciliation requires those addresses to match the current settings exactly. This checks configured addresses, not permanent workspace or organisation IDs. The snapshot must still exist unchanged. Older reports missing the addresses or matching attempt entries, and malformed reports, require manual inspection. A [Salesforce lookup returning HTTP 404](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-upsert-get.html) stays unresolved rather than being treated as permission to create an account.
+New reports record `DATABRICKS_SERVER_HOSTNAME` and `SALESFORCE_MY_DOMAIN_URL`, without tokens or client credentials. Before checking an uncertain record, reconciliation requires those addresses to match the current settings exactly. This checks configured addresses, not permanent workspace or organisation IDs. The snapshot must still exist unchanged. Older reports missing the addresses or matching attempt entries, and malformed reports, require manual inspection. A [Salesforce lookup returning HTTP 404](https://developer.salesforce.com/docs/platform/api-rest/guide/resources-sobject-upsert-get.html) stays unresolved rather than being treated as permission to create a record.
 
 ## Resume an Interrupted Load
 
-This command **can save accounts**. Use the original report, with the same connection addresses, unchanged snapshot and field mapping:
+This command **can save Accounts and Products**. Use the original report, with the same connection addresses, unchanged snapshot and field mapping:
 
 ```bash
 python main.py --resume reports/YOUR_RUN_ID.jsonl
 ```
 
-Resume skips previously verified accounts, checks any uncertain account by readback, then loads unattempted customers. A differing or unavailable uncertain account stops the resume before further saves. Rejected customers are checked again and keep the outcome incomplete if still invalid. A completed run does nothing. `--load`, `--reconcile` and `--resume` are separate modes.
+Resume skips previously verified records, checks any uncertain save by readback, then continues customers and products. A differing or unavailable uncertain record stops the resume before further saves. Rejected records are checked again and keep the outcome incomplete if still invalid. Older customer-only reports retain their original scope, even when they name a product snapshot. A completed run does nothing. `--load`, `--reconcile` and `--resume` are separate modes.
 
-Progress is appended to the same report. `resume_started` marks each attempt; `account_reconciled` records matching fields without claiming another create or update. If resume is interrupted, use the same command and report again. Keep the report intact; truncated or contradictory history requires manual inspection.
+Progress is appended to the same report. `resume_started` marks each attempt; `account_reconciled` or `product_reconciled` records matching fields without claiming another create or update. If resume is interrupted, use the same command and report again. Keep the report intact; truncated or contradictory history requires manual inspection.
 
-The final verified total includes previous verifications, reconciled accounts and successful saves. Created, updated and rejected counts describe the latest attempt. Previously verified accounts are not read from Salesforce again, so later edits there are not detected.
+The final verified total includes previous verifications, reconciled records and successful saves. Created, updated and rejected counts describe the latest attempt. Previously verified records are not read from Salesforce again, so later edits there are not detected.
 
 Resume scans the retained snapshot in batches and checks that previously verified IDs still exist before proceeding. It retains verified IDs in memory and adds a snapshot scan when earlier progress exists; large-scale recovery performance has not been tested. It relies on the snapshot remaining unchanged and does not provide exactly-once Salesforce automation.
 

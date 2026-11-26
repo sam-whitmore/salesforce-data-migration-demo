@@ -10,3 +10,13 @@ def prepare_salesforce_account(customer: Mapping[str, object]) -> dict[str, obje
         "BillingPostalCode": customer["billing_postal_code"],
         "BillingCountryCode": customer["billing_country_code"],
     }
+
+
+def prepare_salesforce_product(product: Mapping[str, object]) -> dict[str, object]:
+    """Map a source product, including inactive products needed by existing licences."""
+    return {
+        "Source_Product_ID__c": product["product_id"],
+        "ProductCode": product["product_code"],
+        "Name": product["product_name"],
+        "IsActive": product["is_active"],
+    }

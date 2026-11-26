@@ -62,6 +62,7 @@ class MainTests(unittest.TestCase):
             spec=RunExecutionResult, results=[Mock(node=model) for model in models],
         )
 
+        self.process_products = resources.enter_context(patch("p2_migration.migrate.process_product_batches"))
         self.database = FakeDatabase(customers=[])
         self.connect_to_databricks = resources.enter_context(patch(
             "p2_migration.migrate.connect_to_databricks", return_value=nullcontext(self.database)
@@ -96,6 +97,7 @@ class MainTests(unittest.TestCase):
 
         # Assert
         self.build.assert_not_called()
+        self.process_products.assert_not_called()
         self.check_models.assert_not_called()
         self.assertEqual(self.database.parameters["customers_table_to_read"], "test.raw.customers")
         self.connect_to_salesforce.assert_not_called()
@@ -325,7 +327,7 @@ class MainTests(unittest.TestCase):
         self.connect_to_databricks.side_effect = OperationalError("private connection details")
 
         # Act and Assert
-        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+        with self.assertRaisesRegex(MigrationError, "Could not read migration data from Databricks") as raised:
             main([])
         self.assertNotIn("private connection details", str(raised.exception))
         self.assertNotIn("Salesforce", str(raised.exception))
@@ -340,7 +342,7 @@ class MainTests(unittest.TestCase):
         ])
 
         # Act and Assert
-        with self.assertRaisesRegex(MigrationError, "Could not read customers from Databricks") as raised:
+        with self.assertRaisesRegex(MigrationError, "Could not read migration data from Databricks") as raised:
             main(["--load"])
         self.assertIn("Earlier Salesforce writes may have completed", str(raised.exception))
         self.assertEqual(self.save_and_verify.call_count, 1)
